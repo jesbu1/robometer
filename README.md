@@ -51,7 +51,7 @@ git clone https://github.com/aliang8/robometer.git
 cd robometer
 
 # Create venv and install
-uv sync
+uv sync --extra robometer
 ```
 
 ### Dataset setup
