@@ -45,7 +45,7 @@ uv run python robometer/evals/run_baseline_eval.py \
     model_config.batch_size=1
 
 # VLAC
-uv run --extra vlac --python .venv-vlac/bin/python python robometer/evals/run_baseline_eval.py \
+uv run --group vlac --no-group robometer python robometer/evals/run_baseline_eval.py \
     reward_model=vlac \
     model_path=InternRobotics/VLAC \
     custom_eval.eval_types=[confusion_matrix] \
