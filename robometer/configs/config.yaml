@@ -147,6 +147,7 @@ custom_eval:
 # Training Configuration
 # =====================================================================================
 training:  
+  exp_name: "rbm" # name for wandb logging and checkpont saving
   # Output and logging
   output_dir: "./logs"
   overwrite_output_dir: false  # If true, overwrite output directory if it exists (works with accelerate/distributed training)
