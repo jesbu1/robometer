@@ -1102,11 +1102,12 @@ def create_training_arguments(cfg: TrainingConfig, output_dir: str, is_eval: boo
         "max_grad_norm": cfg.max_grad_norm,
         "weight_decay": cfg.weight_decay,
         "disable_tqdm": False,
-        # # Compile settings
-        # "torch_compile": True,
-        # "torch_compile_mode": "max-autotune",
-        # "torch_compile_backend": "inductor",
+        "optim": cfg.optim,
     }
+
+    if getattr(cfg, "torch_compile", False):
+        base_args["torch_compile"] = True
+        base_args["torch_compile_backend"] = getattr(cfg, "torch_compile_backend", "inductor")
 
     # Add eval_steps if evaluation_strategy is "steps"
     if cfg.evaluation_strategy == "steps" and cfg.eval_steps is not None:

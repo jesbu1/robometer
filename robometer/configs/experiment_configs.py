@@ -391,11 +391,16 @@ class TrainingConfig:
     prediction_loss_only: bool = field(default=True, metadata={"help": "Only compute loss for the prediction head"})
 
     # Optimizer settings
+    optim: str = field(default="adamw_8bit", metadata={"help": "Optimizer name passed to TrainingArguments (e.g. 'adamw_torch', 'adamw_8bit')"})
     lr_scheduler_type: str = field(default="cosine")
     warmup_steps: int = field(default=0)
     warmup_ratio: float = field(default=0.1)
     max_grad_norm: float = field(default=1.0)
     weight_decay: float = field(default=0.01, metadata={"help": "Weight decay for optimizer"})
+
+    # torch.compile settings (disabled by default; may affect checkpoint save/load)
+    torch_compile: bool = field(default=False, metadata={"help": "Enable torch.compile for the model (slower first steps, faster steady-state)"})
+    torch_compile_backend: str = field(default="inductor", metadata={"help": "torch.compile backend"})
 
     # Vision encoder fine-tuning settings
     vision_encoder_lr: Optional[float] = field(
