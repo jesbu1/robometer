@@ -120,9 +120,30 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
                 "Please set data.use_multi_image=True to use Molmo2 with multi-image input."
             )
 
+        # When the vision encoder is frozen, wrap its forward in torch.no_grad()
+        # so PyTorch doesn't store any activation graph through the 24-layer ViT.
+        # The detached embeddings are scattered into inputs_embeds inside the base
+        # model forward; gradients still flow through the language model normally.
+        if not self.model_config.train_vision_encoder and hasattr(self.model, "visual"):
+            _orig_visual_forward = self.model.visual.forward
+
+            @torch.no_grad()
+            def _frozen_visual_forward(*args, **kwargs):
+                return _orig_visual_forward(*args, **kwargs)
+
+            self.model.visual.forward = _frozen_visual_forward
+
     def gradient_checkpointing_enable(self, **kwargs):
-        """Delegates gradient checkpointing enabling to the base model."""
-        self.model.gradient_checkpointing_enable(**kwargs)
+        """Enable gradient checkpointing on the language model only.
+
+        When the vision encoder is frozen (train_vision_encoder=False) its
+        forward already runs under torch.no_grad(), so checkpointing it would
+        just add overhead. We apply checkpointing only to the language model.
+        """
+        if hasattr(self.model, "language_model"):
+            self.model.language_model.gradient_checkpointing_enable(**kwargs)
+        else:
+            self.model.gradient_checkpointing_enable(**kwargs)
 
     def gradient_checkpointing_disable(self, **kwargs):
         """Delegates gradient checkpointing disabling to the base model."""

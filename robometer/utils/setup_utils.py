@@ -360,7 +360,9 @@ def _load_base_model_with_unsloth(
         Tuple of (base_model, tokenizer)
     """
     logger.info("Using Unsloth for faster training with Qwen model")
-
+    # Disable async loading of model weights for OOM fix w/ Qwen3.5: https://github.com/unslothai/unsloth/issues/4108#issuecomment-4014671755
+    if "Qwen3.5" in cfg.base_model_id:
+        os.environ["HF_DEACTIVATE_ASYNC_LOAD"] = "1" 
     # Load model with unsloth
     base_model, tokenizer = FastVisionModel.from_pretrained(
         cfg.base_model_id,
