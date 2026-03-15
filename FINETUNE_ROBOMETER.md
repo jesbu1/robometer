@@ -103,7 +103,7 @@ Load the same checkpoint but train the full model (no LoRA). Uses more memory; l
 ```bash
 export ROBOMETER_PROCESSED_DATASETS_PATH=/path/to/your/processed_datasets
 
-uv run python train.py \
+uv run accelerate launch --config_file robometer/configs/distributed/fsdp.yaml --num_processes=N_GPUS_YOU_HAVE train.py \
   model.base_model_id=Qwen/Qwen3-VL-4B-Instruct \
   model.use_peft=false \
   model.train_progress_head=true \
@@ -165,7 +165,7 @@ For comparison, run the same `train.py` on the same data but **without** loading
 ```bash
 export ROBOMETER_PROCESSED_DATASETS_PATH=/path/to/your/processed_datasets
 
-uv run python train.py \
+uv run accelerate launch --config_file robometer/configs/distributed/fsdp.yaml --num_processes=N_GPUS_YOU_HAVE train.py \
   model.base_model_id=Qwen/Qwen3-VL-4B-Instruct \
   model.use_peft=true \
   model.train_progress_head=true \
@@ -187,7 +187,7 @@ uv run python train.py \
   training.eval_steps=50 \
   training.custom_eval_steps=50
 
-uv run python train.py \
+uv run accelerate launch --config_file robometer/configs/distributed/fsdp.yaml --num_processes=N_GPUS_YOU_HAVE train.py \
   model.base_model_id=Qwen/Qwen3-VL-4B-Instruct \
   model.use_peft=false \
   model.train_progress_head=true \
