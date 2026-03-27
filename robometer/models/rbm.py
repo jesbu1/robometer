@@ -16,6 +16,11 @@ try:
 except ImportError:
     Qwen3VLModel = None
 
+try:
+    from transformers import Qwen3_5VLModel
+except ImportError:
+    Qwen3_5VLModel = None
+
 # from transformers import AutoModelForImageTextToText as Molmo2VLModel  # Molmo2 uses AutoModelForImageTextToText
 from transformers import SmolVLMModel
 import torch.distributed as dist
@@ -56,6 +61,9 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
         elif "Qwen2.5" in base_model_id:
             hidden_size = config.hidden_size
             self.model_cls = Qwen2_5_VLModel
+        elif "Qwen3.5" in base_model_id:
+            hidden_size = config.text_config.hidden_size
+            self.model_cls = Qwen3_5VLModel
         elif "Qwen3" in base_model_id:
             hidden_size = config.text_config.hidden_size
             self.model_cls = Qwen3VLModel
