@@ -1900,9 +1900,7 @@ class RBMHeadsTrainer(Trainer):
                             f"Trajectory {i} has quality_label='{quality_label}' but success_labels are not all 0s. "
                             f"Found non-zero labels: {(sample_success_labels != 0.0).sum().item()} out of {len(sample_success_labels)}"
                         )
-                        import ipdb
-
-                        ipdb.set_trace()
+                        breakpoint()
 
                     # Include all frames for this trajectory in the mask
                     quality_mask[i, :] = 1.0
@@ -2262,6 +2260,8 @@ class RBMHeadsTrainer(Trainer):
                     mean_value = non_nan_masked_metric.mean().item()
                     outputs_dict[f"{prefix}_ds_{metric_name}/{data_source}"] = mean_value
 
+    _VISION_TENSOR_KEYS = ("pixel_values", "pixel_values_videos")
+
     def forward_model(self, model, inputs, sample_type="progress"):
         """Forward pass for the model."""
         logger.trace(f"forward_model: Starting forward pass for sample_type={sample_type}")
@@ -2307,6 +2307,12 @@ class RBMHeadsTrainer(Trainer):
                 }
                 model_output, model_timing_raw = model(**model_kwargs)
                 logger.trace("forward_model: Model forward pass completed")
+
+            # Free large vision tensors from the caller's dict so they can be
+            # garbage-collected during loss computation instead of staying alive
+            # for the entire training step.
+            for k in self._VISION_TENSOR_KEYS:
+                inputs.pop(k, None)
 
             logger.trace("forward_model: Updating timing and returning")
             self.timing_raw.update(model_timing_raw)
@@ -2359,9 +2365,7 @@ class RBMHeadsTrainer(Trainer):
         # Check for NaN in final loss
         if torch.isnan(final_loss).any():
             if training:
-                import ipdb
-
-                ipdb.set_trace()
+                breakpoint()
             logger.warning(f"NaN detected in progress loss, replacing with 0.0")
             final_loss = torch.tensor(0.0, device=final_loss.device, dtype=final_loss.dtype)
 

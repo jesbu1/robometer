@@ -360,8 +360,11 @@ def _load_base_model_with_unsloth(
         Tuple of (base_model, tokenizer)
     """
     logger.info("Using Unsloth for faster training with Qwen model")
-
+    # Disable async loading of model weights for OOM fix w/ Qwen3.5: https://github.com/unslothai/unsloth/issues/4108#issuecomment-4014671755
+    if "Qwen3.5" in cfg.base_model_id:
+        os.environ["HF_DEACTIVATE_ASYNC_LOAD"] = "1" 
     # Load model with unsloth
+    requested_attn = extra_kwargs["attn_implementation"]
     base_model, tokenizer = FastVisionModel.from_pretrained(
         cfg.base_model_id,
         load_in_4bit=cfg.quantization,  # Use 4bit if quantization is enabled
@@ -369,9 +372,18 @@ def _load_base_model_with_unsloth(
         dtype=torch_dtype,  # Set the dtype from config,
         full_finetuning=True if not cfg.use_peft else False,
         device_map=None,
-        attn_implementation=extra_kwargs["attn_implementation"],
+        attn_implementation=requested_attn,
         trust_remote_code=True,
     )
+
+    # Unsloth may override attn_implementation to "eager". Re-apply the
+    # requested implementation so the model uses SDPA / Flash Attention
+    # instead of materializing the full O(seq_len²) attention matrix.
+    _inner = base_model.model if hasattr(base_model, "model") else base_model
+    for _cfg_obj in [getattr(_inner, "config", None), getattr(getattr(_inner, "config", None), "text_config", None)]:
+        if _cfg_obj is not None and getattr(_cfg_obj, "_attn_implementation", None) != requested_attn:
+            logger.info(f"Re-setting attn_implementation from '{getattr(_cfg_obj, '_attn_implementation', None)}' to '{requested_attn}'")
+            _cfg_obj._attn_implementation = requested_attn
 
     # Apply PEFT if enabled (skip when apply_peft=False, e.g. checkpoint has no adapter files; train.py will add PEFT later)
     if apply_peft and cfg.use_peft and peft_config:
@@ -1102,11 +1114,12 @@ def create_training_arguments(cfg: TrainingConfig, output_dir: str, is_eval: boo
         "max_grad_norm": cfg.max_grad_norm,
         "weight_decay": cfg.weight_decay,
         "disable_tqdm": False,
-        # # Compile settings
-        # "torch_compile": True,
-        # "torch_compile_mode": "max-autotune",
-        # "torch_compile_backend": "inductor",
+        "optim": cfg.optim,
     }
+
+    if getattr(cfg, "torch_compile", False):
+        base_args["torch_compile"] = True
+        base_args["torch_compile_backend"] = getattr(cfg, "torch_compile_backend", "inductor")
 
     # Add eval_steps if evaluation_strategy is "steps"
     if cfg.evaluation_strategy == "steps" and cfg.eval_steps is not None:

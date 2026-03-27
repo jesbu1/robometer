@@ -45,7 +45,6 @@ import datasets
 
 datasets.logging.set_verbosity_error()
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-torch.autograd.set_detect_anomaly(True)
 
 # Register structured configs with Hydra
 cs = ConfigStore.instance()
@@ -70,6 +69,7 @@ def train(cfg: ExperimentConfig):
     timing_raw = {}
 
     run_name = cfg.training.exp_name
+    torch.autograd.set_detect_anomaly(cfg.debug)
     if cfg.debug:
         run_name += "_debug"
         cfg.training.logging_steps = 1
