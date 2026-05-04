@@ -168,7 +168,7 @@ See `robometer/configs/experiment_configs.py` for more config options.
 Preprocess a new dataset, LoRA fine-tune from **Robometer-4B** on your own data, upload the model to the Hub, and run inference:
 
 - **Preprocessing:** Add your dataset to the preprocess config and run the preprocessor; for raw videos (e.g. [MINT-SJTU/RoboFAC-dataset](https://huggingface.co/datasets/MINT-SJTU/RoboFAC-dataset)), convert to RBM format first via `dataset_upload`, then preprocess.
-- **Fine-tuning:** Set `model.use_peft=true` and `training.resume_from_checkpoint=robometer/Robometer-4B`, then train on your dataset.
+- **Fine-tuning:** Set `model.use_peft=true` and `training.load_from_checkpoint=robometer/Robometer-4B`, then train on your dataset.
 - **Upload & inference:** Use `robometer/utils/upload_to_hub.py` to push checkpoints; run `scripts/example_inference_local.py` with your Hub model.
 
 Full step-by-step: **[FINETUNE_ROBOMETER.md](FINETUNE_ROBOMETER.md)**.
@@ -268,3 +268,13 @@ export ROBOMETER_PROCESSED_DATASETS_PATH=/path/to/save/processed_datasets
 ## 📑 License
 
 This project is licensed under the [MIT License](LICENSE).
+
+## BibTeX
+```
+@inproceedings{liang2026robometer,
+  title     = {Robometer: Scaling General-Purpose Robotic Reward Models via Trajectory Comparisons},
+  author={Anthony Liang and Yigit Korkmaz and Jiahui Zhang and Minyoung Hwang and Abrar Anwar and Sidhant Kaushik and Aditya Shah and Alex S. Huang and Luke Zettlemoyer and Dieter Fox and Yu Xiang and Anqi Li and Andreea Bobu and Abhishek Gupta and Stephen Tu and Erdem Biyik and Jesse Zhang},
+  year={2026},
+  booktitle={Robotics: Science and Systems 2026},
+}
+```
