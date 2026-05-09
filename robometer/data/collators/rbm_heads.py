@@ -260,13 +260,18 @@ class RBMBatchCollator(BaseCollator):
         """
         if "gemma" in self.base_model_id.lower():
             # Gemma4: use processor directly with images, no qwen_vl_utils needed
-            all_images = []
+            # Group images per conversation for proper batching
+            images_per_text = []
             for conv in conversations:
+                conv_images = []
                 for msg in conv:
                     if isinstance(msg.get("content"), list):
                         for item in msg["content"]:
                             if item.get("type") == "image" and item.get("image") is not None:
-                                all_images.append(item["image"])
+                                conv_images.append(item["image"])
+                # Gemma4 processor expects images as a single PIL image per text,
+                # or a list of PIL images per text for multi-image sequences
+                images_per_text.append(conv_images)
 
             texts = [
                 self.processor.apply_chat_template(
@@ -283,8 +288,8 @@ class RBMBatchCollator(BaseCollator):
                 "truncation": False,
                 "return_tensors": "pt",
             }
-            if all_images:
-                processor_kwargs["images"] = all_images
+            if any(images_per_text):
+                processor_kwargs["images"] = images_per_text
 
             batch_inputs = self.processor(**processor_kwargs)
         elif "Qwen" in self.base_model_id or "Molmo" in self.base_model_id:

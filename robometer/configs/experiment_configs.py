@@ -11,7 +11,7 @@ from transformers import PretrainedConfig
 
 
 @dataclass
-class ModelConfig(PretrainedConfig):
+class ModelConfig:
     """Config for model settings"""
 
     base_model_id: str = field(default="Qwen/Qwen2.5-VL-3B-Instruct")

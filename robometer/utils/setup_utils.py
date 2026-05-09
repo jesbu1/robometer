@@ -586,6 +586,25 @@ def _add_special_tokens_and_resize(cfg: ModelConfig, processor: AutoProcessor, b
     base_model.resize_token_embeddings(len(processor.tokenizer))
     logger.info(f"Resized token embeddings to {len(processor.tokenizer)}")
 
+    # Gemma4 has per-layer embeddings that also need resizing
+    is_gemma4 = "gemma" in cfg.base_model_id.lower()
+    if is_gemma4 and hasattr(base_model, "language_model") and hasattr(base_model.language_model, "embed_tokens_per_layer"):
+        per_layer_embed = base_model.language_model.embed_tokens_per_layer
+        if per_layer_embed.weight.shape[0] < len(processor.tokenizer):
+            old_vocab = per_layer_embed.weight.shape[0]
+            new_embed = torch.nn.Embedding(
+                len(processor.tokenizer),
+                per_layer_embed.weight.shape[1],
+                padding_idx=per_layer_embed.padding_idx,
+                device=per_layer_embed.weight.device,
+                dtype=per_layer_embed.weight.dtype,
+            )
+            new_embed.weight.data[:old_vocab] = per_layer_embed.weight.data
+            mean_embed = per_layer_embed.weight.data.mean(dim=0)
+            new_embed.weight.data[old_vocab:] = mean_embed.unsqueeze(0).expand(len(processor.tokenizer) - old_vocab, -1)
+            base_model.language_model.embed_tokens_per_layer = new_embed
+            logger.info(f"Resized per-layer embeddings from {old_vocab} to {len(processor.tokenizer)}")
+
     # import ipdb; ipdb.set_trace()
     # # Resize token embeddings if new tokens were added
     # vocab_size = (
@@ -1256,7 +1275,7 @@ def setup_batch_collator(
             "Please set data.use_multi_image=True to use Molmo2 with multi-image input."
         )
 
-    if "Qwen" in cfg.model.base_model_id or "SmolVLM" in cfg.model.base_model_id or "Molmo" in cfg.model.base_model_id:
+    if "Qwen" in cfg.model.base_model_id or "SmolVLM" in cfg.model.base_model_id or "Molmo" in cfg.model.base_model_id or "gemma" in cfg.model.base_model_id.lower():
         batch_collator = RBMBatchCollator(**collator_kwargs)
     # elif "rewind_transformer" in cfg.model.base_model_id:
     elif "rewind" in cfg.model.base_model_id:
