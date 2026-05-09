@@ -141,27 +141,18 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
                 "Please set data.use_multi_image=True to use Molmo2 with multi-image input."
             )
 
-        # When the vision encoder is frozen, wrap its forward in torch.no_grad()
-        # so PyTorch doesn't store any activation graph through the ViT.
-        # The detached embeddings are scattered into inputs_embeds inside the base
-        # model forward; gradients still flow through the language model normally.
+        # When the vision encoder is frozen, set requires_grad=False on its params
+        # instead of using @torch.no_grad() on forward. The no_grad() wrapper blocks
+        # FSDP's autograd hooks, causing "invalid configuration argument" CUDA errors.
+        # requires_grad=False preserves the autograd graph structure FSDP needs while
+        # still preventing weight updates.
         if not self.model_config.train_vision_encoder:
             if hasattr(self.model, "visual"):
-                _orig_visual_forward = self.model.visual.forward
-
-                @torch.no_grad()
-                def _frozen_visual_forward(*args, **kwargs):
-                    return _orig_visual_forward(*args, **kwargs)
-
-                self.model.visual.forward = _frozen_visual_forward
+                for p in self.model.visual.parameters():
+                    p.requires_grad_(False)
             elif hasattr(self.model, "vision_tower"):
-                _orig_vt_forward = self.model.vision_tower.forward
-
-                @torch.no_grad()
-                def _frozen_vt_forward(*args, **kwargs):
-                    return _orig_vt_forward(*args, **kwargs)
-
-                self.model.vision_tower.forward = _frozen_vt_forward
+                for p in self.model.vision_tower.parameters():
+                    p.requires_grad_(False)
 
     def gradient_checkpointing_enable(self, **kwargs):
         """Enable gradient checkpointing on the language model only.
