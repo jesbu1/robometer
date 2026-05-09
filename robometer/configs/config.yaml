@@ -233,7 +233,7 @@ logging:
   save_processor: true
   log_to: [wandb]
   wandb_project: "robometer"
-  wandb_entity: clvr
+  wandb_entity: jesbu1
   wandb_notes: "training Robometer"
   
   # SaveBestCallback configuration
