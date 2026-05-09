@@ -4,7 +4,19 @@ Shared setup utilities for RBM training.
 This file contains setup functions that can be reused across different training scripts.
 """
 
-from unsloth import FastVisionModel
+# Unsloth import is lazy to avoid initialization errors
+FastVisionModel = None
+HAS_UNSLOTH = False
+def _ensure_unsloth():
+    global FastVisionModel, HAS_UNSLOTH
+    if not HAS_UNSLOTH:
+        try:
+            from unsloth import FastVisionModel as _fvm
+            FastVisionModel = _fvm
+            HAS_UNSLOTH = True
+        except (ImportError, NameError) as e:
+            logger.warning(f"Unsloth import failed: {e}. Training without Unsloth optimizations.")
+            HAS_UNSLOTH = False
 
 import re
 import os
@@ -359,13 +371,18 @@ def _load_base_model_with_unsloth(
     Returns:
         Tuple of (base_model, tokenizer)
     """
-    logger.info("Using Unsloth for faster training with Qwen model")
+    _ensure_unsloth()
+    if not HAS_UNSLOTH:
+        raise ImportError("Unsloth is required but could not be imported.")
+    is_gemma4 = "gemma" in cfg.base_model_id.lower()
+    logger.info(f"Using Unsloth for faster training with {'Gemma4' if is_gemma4 else 'Qwen'} model")
     # Disable async loading of model weights for OOM fix w/ Qwen3.5: https://github.com/unslothai/unsloth/issues/4108#issuecomment-4014671755
     if "Qwen3.5" in cfg.base_model_id:
         os.environ["HF_DEACTIVATE_ASYNC_LOAD"] = "1" 
     # Load model with unsloth
     requested_attn = extra_kwargs["attn_implementation"]
-    base_model, tokenizer = FastVisionModel.from_pretrained(
+    # For Gemma4, FastVisionModel.from_pretrained returns (model, processor) instead of (model, tokenizer)
+    result = FastVisionModel.from_pretrained(
         cfg.base_model_id,
         load_in_4bit=cfg.quantization,  # Use 4bit if quantization is enabled
         use_gradient_checkpointing="unsloth",  # Use unsloth's optimized checkpointing
@@ -375,6 +392,11 @@ def _load_base_model_with_unsloth(
         attn_implementation=requested_attn,
         trust_remote_code=True,
     )
+    if is_gemma4:
+        base_model, processor_or_tok = result
+        tokenizer = processor_or_tok.tokenizer
+    else:
+        base_model, tokenizer = result
 
     # Unsloth may override attn_implementation to "eager". Re-apply the
     # requested implementation so the model uses SDPA / Flash Attention
@@ -441,9 +463,10 @@ def _load_base_model_standard(
     Returns:
         Base model
     """
-    # Check if it's Molmo, Qwen3 or Qwen2/2.5
+    # Check if it's Molmo, Qwen3, Qwen2/2.5, or Gemma4
     is_molmo = "Molmo" in cfg.base_model_id
     is_qwen3 = ("Qwen3" in cfg.base_model_id or "qwen3" in cfg.base_model_id.lower()) and HAS_QWEN3
+    is_gemma4 = "gemma-4" in cfg.base_model_id.lower() or "gemma4" in cfg.base_model_id.lower()
 
     # Select appropriate model classes based on version and model type
     if is_molmo:
@@ -458,6 +481,18 @@ def _load_base_model_standard(
         # Extract the base model for RBM
         base_model = base_model.model
         logger.info("Using Molmo2 models")
+    elif is_gemma4:
+        # Gemma4 uses AutoModelForImageTextToText
+        base_model = AutoModelForImageTextToText.from_pretrained(
+            cfg.base_model_id,
+            torch_dtype=torch_dtype,
+            trust_remote_code=cfg.trust_remote_code,
+            **extra_kwargs,
+            quantization_config=bnb,
+        )
+        # Extract the inner Gemma4Model for RBM
+        base_model = base_model.model
+        logger.info("Using Gemma4 models")
     elif is_qwen3:
         qwen_model_cls = Qwen3VLModel
         base_model = qwen_model_cls.from_pretrained(
@@ -500,7 +535,7 @@ def _setup_processor_and_tokenizer(cfg: ModelConfig) -> AutoProcessor:
             use_fast=True,
         )
         logger.info(f"SmolVLM Processor: {processor}")
-    elif "Qwen" in cfg.base_model_id or "Molmo" in cfg.base_model_id:
+    elif "Qwen" in cfg.base_model_id or "Molmo" in cfg.base_model_id or "gemma" in cfg.base_model_id.lower():
         processor = AutoProcessor.from_pretrained(
             cfg.base_model_id,
             trust_remote_code=cfg.trust_remote_code,
@@ -508,7 +543,7 @@ def _setup_processor_and_tokenizer(cfg: ModelConfig) -> AutoProcessor:
             # padding_side="left",
             padding_side="right",
         )
-        logger.info(f"Qwen Processor: {processor}")
+        logger.info(f"Processor: {processor}")
     else:
         raise ValueError(f"Invalid base model id: {cfg.base_model_id}")
 
@@ -655,6 +690,11 @@ def _verify_checkpoint_loading(cfg: ModelConfig, model: Any, before_weights: dic
         after_progress_head = model.progress_head[0].weight
         after_lm_embed_tokens = model.model.language_model.embed_tokens.weight
         after_lm_layer = model.model.language_model.layers[0].mlp.up_proj.weight
+    elif "gemma-4" in cfg.base_model_id.lower() or "gemma4" in cfg.base_model_id.lower():
+        after_visual = model.model.vision_tower.encoder.layers[0].mlp.down_proj.linear.weight
+        after_progress_head = model.progress_head[0].weight
+        after_lm_embed_tokens = model.model.language_model.embed_tokens.weight
+        after_lm_layer = model.model.language_model.layers[0].mlp.up_proj.linear.weight
     else:
         return
 
@@ -712,7 +752,7 @@ def setup_model_and_processor(
     logger.info(f"Using torch dtype: {torch_dtype}")
 
     # Check if unsloth should be used
-    use_unsloth = cfg.use_unsloth and "Qwen" in cfg.base_model_id
+    use_unsloth = cfg.use_unsloth and ("Qwen" in cfg.base_model_id or "gemma" in cfg.base_model_id.lower())
 
     if use_unsloth:
         logger.info("Unsloth mode enabled for faster training")
@@ -766,7 +806,7 @@ def setup_model_and_processor(
     apply_peft_before_wrap = cfg.use_peft and (not hf_model_id or has_adapter_files)
 
     # Load processor and tokenizer
-    if "SmolVLM" in cfg.base_model_id or "Qwen" in cfg.base_model_id or "Molmo" in cfg.base_model_id:
+    if "SmolVLM" in cfg.base_model_id or "Qwen" in cfg.base_model_id or "Molmo" in cfg.base_model_id or "gemma" in cfg.base_model_id.lower():
         if "SmolVLM" in cfg.base_model_id:
             processor = AutoProcessor.from_pretrained(
                 cfg.base_model_id,
@@ -786,7 +826,7 @@ def setup_model_and_processor(
             )
             model_cls = RBM
 
-        elif "Qwen" in cfg.base_model_id or "Molmo" in cfg.base_model_id:
+        elif "Qwen" in cfg.base_model_id or "Molmo" in cfg.base_model_id or "gemma" in cfg.base_model_id.lower():
             # Load base model (with or without Unsloth)
             if use_unsloth:
                 base_model, tokenizer = _load_base_model_with_unsloth(
@@ -811,119 +851,126 @@ def setup_model_and_processor(
         else:
             raise ValueError(f"Invalid base model id: {cfg.base_model_id}")
 
-        # CRITICAL: Ensure PEFT is applied to base_model BEFORE wrapping in RBM (when checkpoint has adapters or we're not loading)
-        if apply_peft_before_wrap and cfg.use_peft and not isinstance(base_model, PeftModel):
-            logger.warning("PEFT is enabled but base_model is not a PeftModel. Applying PEFT now...")
-            if peft_config is None:
-                raise ValueError("PEFT is enabled but peft_config is None. Cannot apply PEFT without configuration.")
+    # CRITICAL: Ensure PEFT is applied to base_model BEFORE wrapping in RBM (when checkpoint has adapters or we're not loading)
+    if apply_peft_before_wrap and cfg.use_peft and not isinstance(base_model, PeftModel):
+        logger.warning("PEFT is enabled but base_model is not a PeftModel. Applying PEFT now...")
+        if peft_config is None:
+            raise ValueError("PEFT is enabled but peft_config is None. Cannot apply PEFT without configuration.")
 
-            # Apply PEFT to base_model
-            from peft import LoraConfig, get_peft_model
+        # Apply PEFT to base_model
+        from peft import LoraConfig, get_peft_model
 
-            lora_config = LoraConfig(
-                r=peft_config.r,
-                lora_alpha=peft_config.lora_alpha,
-                target_modules=peft_config.target_modules,
-                lora_dropout=peft_config.lora_dropout,
-                bias=peft_config.bias,
-            )
-            base_model = get_peft_model(base_model, lora_config)
-            logger.info("Applied PEFT to base_model before wrapping in RBM")
-
-        # Verify PEFT was applied when we expect it
-        if apply_peft_before_wrap and cfg.use_peft:
-            if isinstance(base_model, PeftModel):
-                logger.info("Confirmed: base_model is a PeftModel - ready to load adapter weights from checkpoint")
-            else:
-                logger.error("CRITICAL: PEFT is enabled but base_model is not a PeftModel after applying PEFT!")
-                raise ValueError(
-                    "Failed to apply PEFT to base_model. Cannot load adapter weights without PeftModel structure."
-                )
-
-        # Add special tokens and resize embeddings
-        _add_special_tokens_and_resize(cfg, processor, base_model)
-
-        # Initialize RBM model wrapper with the pre-loaded base model
-        logger.info("Initializing RBM model...")
-        tokenizer = processor.tokenizer
-
-        model = model_cls(
-            config=base_model.config,
-            processor=processor,
-            tokenizer=tokenizer,
-            base_model=base_model,
-            base_model_id=cfg.base_model_id,
-            model_config=cfg,  # Pass ModelConfig for RBM-specific settings
+        lora_config = LoraConfig(
+            r=peft_config.r,
+            lora_alpha=peft_config.lora_alpha,
+            target_modules=peft_config.target_modules,
+            lora_dropout=peft_config.lora_dropout,
+            bias=peft_config.bias,
         )
+        base_model = get_peft_model(base_model, lora_config)
+        logger.info("Applied PEFT to base_model before wrapping in RBM")
 
-        # Load checkpoint if provided
-        if hf_model_id:
-            repo_id, revision_to_load = parse_hf_model_id_and_revision(hf_model_id, model_name="model")
-            checkpoint_path = checkpoint_path_for_load
-            if checkpoint_path is None:
-                hub_token = os.environ.get("HF_TOKEN")
-                checkpoint_path = resolve_checkpoint_path(hf_model_id, hub_token=hub_token)
-            if checkpoint_path is None:
-                raise ValueError(f"Could not resolve checkpoint path: {hf_model_id}")
+    # Verify PEFT was applied when we expect it
+    if apply_peft_before_wrap and cfg.use_peft:
+        if isinstance(base_model, PeftModel):
+            logger.info("Confirmed: base_model is a PeftModel - ready to load adapter weights from checkpoint")
+        else:
+            logger.error("CRITICAL: PEFT is enabled but base_model is not a PeftModel after applying PEFT!")
+            raise ValueError(
+                "Failed to apply PEFT to base_model. Cannot load adapter weights without PeftModel structure."
+            )
 
-            # When use_peft and checkpoint has adapter files: load via PeftModel.from_pretrained + custom heads
-            # When use_peft and checkpoint has NO adapter files: we built base without PEFT; load weights only; train.py will add PEFT
-            if cfg.use_peft:
-                if has_adapter_files:
-                    logger.info("Loading PEFT adapters using standard PeftModel.from_pretrained() method")
-                    if not isinstance(model.model, PeftModel):
-                        logger.error("CRITICAL: model.model is not a PeftModel! Cannot load adapter weights.")
-                        raise ValueError(
-                            "model.model is not a PeftModel. "
-                            "This should not happen if PEFT was applied correctly before wrapping in RBM."
-                        )
-                    logger.info("Checkpoint contains PEFT adapter files - loading using PeftModel.from_pretrained()")
-                    try:
-                        model.model = PeftModel.from_pretrained(model.model, checkpoint_path)
-                        logger.info("Successfully loaded PEFT adapters using PeftModel.from_pretrained()")
-                        logger.info("Loading custom heads only (adapters already loaded)")
-                        _load_checkpoint_weights_from_safetensors(model, checkpoint_path, cfg, load_adapters=False)
-                    except Exception as e:
-                        logger.warning(f"PeftModel.from_pretrained() failed: {e}")
-                        logger.info("Falling back to manual loading for all weights")
-                        _load_checkpoint_weights_from_safetensors(model, checkpoint_path, cfg, load_adapters=True)
-                else:
-                    # Checkpoint has no adapter files; we built base without PEFT, load base+heads only; train.py will add PEFT
-                    logger.info("Checkpoint has no PEFT adapter files - loading base + custom heads (PEFT will be added in train.py)")
+    # Add special tokens and resize embeddings
+    _add_special_tokens_and_resize(cfg, processor, base_model)
+
+    # Initialize RBM model wrapper with the pre-loaded base model
+    logger.info("Initializing RBM model...")
+    tokenizer = processor.tokenizer
+
+    model = model_cls(
+        config=base_model.config,
+        processor=processor,
+        tokenizer=tokenizer,
+        base_model=base_model,
+        base_model_id=cfg.base_model_id,
+        model_config=cfg,  # Pass ModelConfig for RBM-specific settings
+    )
+
+    # Load checkpoint if provided
+    if hf_model_id:
+        repo_id, revision_to_load = parse_hf_model_id_and_revision(hf_model_id, model_name="model")
+        checkpoint_path = checkpoint_path_for_load
+        if checkpoint_path is None:
+            hub_token = os.environ.get("HF_TOKEN")
+            checkpoint_path = resolve_checkpoint_path(hf_model_id, hub_token=hub_token)
+        if checkpoint_path is None:
+            raise ValueError(f"Could not resolve checkpoint path: {hf_model_id}")
+
+        # When use_peft and checkpoint has adapter files: load via PeftModel.from_pretrained + custom heads
+        # When use_peft and checkpoint has NO adapter files: we built base without PEFT; load weights only; train.py will add PEFT
+        if cfg.use_peft:
+            if has_adapter_files:
+                logger.info("Loading PEFT adapters using standard PeftModel.from_pretrained() method")
+                if not isinstance(model.model, PeftModel):
+                    logger.error("CRITICAL: model.model is not a PeftModel! Cannot load adapter weights.")
+                    raise ValueError(
+                        "model.model is not a PeftModel. "
+                        "This should not happen if PEFT was applied correctly before wrapping in RBM."
+                    )
+                logger.info("Checkpoint contains PEFT adapter files - loading using PeftModel.from_pretrained()")
+                try:
+                    model.model = PeftModel.from_pretrained(model.model, checkpoint_path)
+                    logger.info("Successfully loaded PEFT adapters using PeftModel.from_pretrained()")
+                    logger.info("Loading custom heads only (adapters already loaded)")
+                    _load_checkpoint_weights_from_safetensors(model, checkpoint_path, cfg, load_adapters=False)
+                except Exception as e:
+                    logger.warning(f"PeftModel.from_pretrained() failed: {e}")
+                    logger.info("Falling back to manual loading for all weights")
                     _load_checkpoint_weights_from_safetensors(model, checkpoint_path, cfg, load_adapters=True)
             else:
-                # For non-PEFT models, we can use from_pretrained as before
-                # Capture before weights for verification
-                before_weights = {}
-                if "Qwen2.5" in cfg.base_model_id:
-                    before_weights = {
-                        "visual": model.model.visual.blocks[0].mlp.down_proj.weight,
-                        "progress_head": model.progress_head[0].weight,
-                        "lm_embed_tokens": model.model.language_model.embed_tokens.weight,
-                        "lm_layer": model.model.language_model.layers[0].mlp.up_proj.weight,
-                    }
-                elif "Qwen3" in cfg.base_model_id or "Molmo" in cfg.base_model_id:
-                    before_weights = {
-                        "visual": model.model.visual.blocks[0].mlp.linear_fc1.weight,
-                        "progress_head": model.progress_head[0].weight,
-                        "lm_embed_tokens": model.model.language_model.embed_tokens.weight,
-                        "lm_layer": model.model.language_model.layers[0].mlp.up_proj.weight,
-                    }
+                # Checkpoint has no adapter files; we built base without PEFT, load base+heads only; train.py will add PEFT
+                logger.info("Checkpoint has no PEFT adapter files - loading base + custom heads (PEFT will be added in train.py)")
+                _load_checkpoint_weights_from_safetensors(model, checkpoint_path, cfg, load_adapters=True)
+        else:
+            # For non-PEFT models, we can use from_pretrained as before
+            # Capture before weights for verification
+            before_weights = {}
+            if "Qwen2.5" in cfg.base_model_id:
+                before_weights = {
+                    "visual": model.model.visual.blocks[0].mlp.down_proj.weight,
+                    "progress_head": model.progress_head[0].weight,
+                    "lm_embed_tokens": model.model.language_model.embed_tokens.weight,
+                    "lm_layer": model.model.language_model.layers[0].mlp.up_proj.weight,
+                }
+            elif "Qwen3" in cfg.base_model_id or "Molmo" in cfg.base_model_id:
+                before_weights = {
+                    "visual": model.model.visual.blocks[0].mlp.linear_fc1.weight,
+                    "progress_head": model.progress_head[0].weight,
+                    "lm_embed_tokens": model.model.language_model.embed_tokens.weight,
+                    "lm_layer": model.model.language_model.layers[0].mlp.up_proj.weight,
+                }
+            elif "gemma-4" in cfg.base_model_id.lower() or "gemma4" in cfg.base_model_id.lower():
+                before_weights = {
+                    "visual": model.model.vision_tower.encoder.layers[0].mlp.down_proj.linear.weight,
+                    "progress_head": model.progress_head[0].weight,
+                    "lm_embed_tokens": model.model.language_model.embed_tokens.weight,
+                    "lm_layer": model.model.language_model.layers[0].mlp.up_proj.linear.weight,
+                }
 
-                # Load the model from the evaluation path
-                model = model_cls.from_pretrained(
-                    repo_id,
-                    processor=processor,
-                    tokenizer=tokenizer,
-                    base_model=base_model,
-                    base_model_id=cfg.base_model_id,
-                    model_config=cfg,
-                    revision=revision_to_load,
-                )
+            # Load the model from the evaluation path
+            model = model_cls.from_pretrained(
+                repo_id,
+                processor=processor,
+                tokenizer=tokenizer,
+                base_model=base_model,
+                base_model_id=cfg.base_model_id,
+                model_config=cfg,
+                revision=revision_to_load,
+            )
 
-                # Verify weights were loaded
-                if before_weights:
-                    _verify_checkpoint_loading(cfg, model, before_weights)
+            # Verify weights were loaded
+            if before_weights:
+                _verify_checkpoint_loading(cfg, model, before_weights)
 
     # elif "rewind_transformer" in cfg.base_model_id or "rewind_scale_transformer" in cfg.base_model_id:
     elif "rewind" in cfg.base_model_id:
@@ -975,7 +1022,7 @@ def setup_model_and_processor(
     # Helper function to check if a parameter is part of the base model (vision/language)
     def is_base_model_param(name: str) -> bool:
         """Check if parameter belongs to base model (vision/language) that PEFT handles."""
-        base_model_patterns = ["visual", "vision", "language_model", "text_encoder", "text_model", "image_encoder"]
+        base_model_patterns = ["visual", "vision", "language_model", "text_encoder", "text_model", "image_encoder", "audio_tower", "embed_vision", "embed_audio"]
         return any(pattern in name for pattern in base_model_patterns)
 
     # Helper function to check if a parameter is a prediction head

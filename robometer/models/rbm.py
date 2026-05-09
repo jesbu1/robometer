@@ -21,6 +21,11 @@ try:
 except ImportError:
     Qwen3_5Model = None
 
+try:
+    from transformers.models.gemma4.modeling_gemma4 import Gemma4Model
+except ImportError:
+    Gemma4Model = None
+
 # from transformers import AutoModelForImageTextToText as Molmo2VLModel  # Molmo2 uses AutoModelForImageTextToText
 from transformers import SmolVLMModel
 import torch.distributed as dist
@@ -54,6 +59,11 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
     _supports_sdpa = True
     _supports_flash_attn_2 = True
 
+    @staticmethod
+    def _check_and_adjust_experts_implementation(experts_implementation=None):
+        """Skip expert implementation checks - RBM is a wrapper model."""
+        return "eager"
+
     def __init__(self, config, processor, tokenizer, base_model=None, base_model_id=None, model_config=None):
         if "SmolVLM" in base_model_id:
             hidden_size = config.text_config.hidden_size
@@ -72,6 +82,9 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
             hidden_size = config.text_config.hidden_size
             self.model_cls = Qwen3VLModel
             # self.model_cls = Molmo2VLModel
+        elif "gemma-4" in base_model_id.lower() or "gemma4" in base_model_id.lower():
+            hidden_size = config.text_config.hidden_size
+            self.model_cls = Gemma4Model
         else:
             raise ValueError(f"Unsupported base model: {base_model_id}")
 
@@ -129,17 +142,26 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
             )
 
         # When the vision encoder is frozen, wrap its forward in torch.no_grad()
-        # so PyTorch doesn't store any activation graph through the 24-layer ViT.
+        # so PyTorch doesn't store any activation graph through the ViT.
         # The detached embeddings are scattered into inputs_embeds inside the base
         # model forward; gradients still flow through the language model normally.
-        if not self.model_config.train_vision_encoder and hasattr(self.model, "visual"):
-            _orig_visual_forward = self.model.visual.forward
+        if not self.model_config.train_vision_encoder:
+            if hasattr(self.model, "visual"):
+                _orig_visual_forward = self.model.visual.forward
 
-            @torch.no_grad()
-            def _frozen_visual_forward(*args, **kwargs):
-                return _orig_visual_forward(*args, **kwargs)
+                @torch.no_grad()
+                def _frozen_visual_forward(*args, **kwargs):
+                    return _orig_visual_forward(*args, **kwargs)
 
-            self.model.visual.forward = _frozen_visual_forward
+                self.model.visual.forward = _frozen_visual_forward
+            elif hasattr(self.model, "vision_tower"):
+                _orig_vt_forward = self.model.vision_tower.forward
+
+                @torch.no_grad()
+                def _frozen_vt_forward(*args, **kwargs):
+                    return _orig_vt_forward(*args, **kwargs)
+
+                self.model.vision_tower.forward = _frozen_vt_forward
 
     def gradient_checkpointing_enable(self, **kwargs):
         """Enable gradient checkpointing on the language model only.
@@ -188,6 +210,7 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
         """
         # Detect model type and get appropriate tokenizer and tokens
         is_molmo = "Molmo" in self.base_model_id
+        is_gemma4 = "gemma-4" in self.base_model_id.lower() or "gemma4" in self.base_model_id.lower()
         if "SmolVLM" in self.base_model_id:
             # SmolVLM mode: same token appears in pairs
             tokenizer = self.tokenizer
@@ -195,6 +218,7 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
             end_token = None  # Same token for both start and end
             use_same_token = True
             use_molmo_mode = False
+            use_gemma4_mode = False
         elif is_molmo:
             # Molmo2 mode: <low_res_im_start> followed by <im_patch> tokens
             tokenizer = self.processor.tokenizer
@@ -203,6 +227,13 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
             patch_token = "<im_patch>"
             use_same_token = False
             use_molmo_mode = True
+            use_gemma4_mode = False
+        elif is_gemma4:
+            # Gemma4 mode: boi token (255999) followed by image tokens (258880), ended by eoi token (258882)
+            # Use direct token IDs from model config
+            use_same_token = False
+            use_molmo_mode = False
+            use_gemma4_mode = True
         else:
             # Qwen mode: different start and end tokens
             tokenizer = self.processor.tokenizer
@@ -210,16 +241,22 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
             end_token = "<|vision_end|>"
             use_same_token = False
             use_molmo_mode = False
+            use_gemma4_mode = False
 
         # Get token IDs
-        start_token_id = tokenizer.convert_tokens_to_ids(start_token)
+        if use_gemma4_mode:
+            start_token_id = self.model.config.boi_token_id
+            end_token_id = self.model.config.eoi_token_id
+        else:
+            start_token_id = tokenizer.convert_tokens_to_ids(start_token)
 
         # Find all positions where start tokens appear
         start_positions = (input_ids == start_token_id).nonzero(as_tuple=True)[0]
 
         if len(start_positions) == 0:
+            token_label = f"token ID {start_token_id}" if use_gemma4_mode else f"'{start_token}' with token ID {start_token_id}"
             raise ValueError(
-                f"No {start_token} tokens found in input_ids. Token ID {start_token_id} not found in sequence."
+                f"No image start tokens ({token_label}) found in input_ids."
             )
 
         # Handle different pairing modes
@@ -255,22 +292,24 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
                         end_pos = patches_for_this_image[-1].item()
                         token_pairs.append((start_pos_val, end_pos))
         else:
-            # Qwen mode: different start and end tokens
-            end_token_id = tokenizer.convert_tokens_to_ids(end_token)
+            # Qwen mode (and Gemma4): different start and end tokens
+            if not use_gemma4_mode:
+                end_token_id = tokenizer.convert_tokens_to_ids(end_token)
 
             # Find all positions where end tokens appear
             end_positions = (input_ids == end_token_id).nonzero(as_tuple=True)[0]
 
             if len(end_positions) == 0:
+                token_label = f"token ID {end_token_id}" if use_gemma4_mode else f"'{end_token}' with token ID {end_token_id}"
                 raise ValueError(
-                    f"No {end_token} tokens found in input_ids. Token ID {end_token_id} not found in sequence."
+                    f"No image end tokens ({token_label}) found in input_ids."
                 )
 
             if len(start_positions) != len(end_positions):
                 raise ValueError(
                     f"Mismatched number of tokens: "
-                    f"found {len(start_positions)} {start_token} tokens "
-                    f"and {len(end_positions)} {end_token} tokens."
+                    f"found {len(start_positions)} start tokens "
+                    f"and {len(end_positions)} end tokens."
                 )
 
             # Pair up start and end tokens (they should appear in order: start, end, start, end, ...)
@@ -602,6 +641,66 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
                     merge_size,
                     timing_raw,
                 )
+
+            output.progress_logits = progress_logits
+            output.success_logits = success_logits
+
+            # Handle preference token if needed
+            if sample_type == "preference":
+                token_hidden = self._extract_hidden_state_from_token(hidden_state, input_ids, "<|pref_token|>")
+                output.pref_logits = self.preference_head(token_hidden)
+
+        return output, timing_raw
+
+    def _forward_gemma4(
+        self,
+        input_ids,
+        attention_mask,
+        pixel_values,
+        sample_type,
+        timing_raw,
+        mm_token_type_ids=None,
+        image_position_ids=None,
+        **kwargs,
+    ):
+        """Forward pass for Gemma4 models (multi-image only). Returns (ModelOutput, timing_raw)."""
+        model_kwargs = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "pixel_values": pixel_values,
+            "mm_token_type_ids": mm_token_type_ids,
+            "image_position_ids": image_position_ids,
+            **kwargs,
+        }
+        with _timer("time/rbm_forward", timing_raw=timing_raw):
+            outputs = self.model(**model_kwargs)
+            hidden_state = outputs.last_hidden_state  # [B, seq_len, hidden_dim]
+
+        progress_logits = {"A": None, "B": None}
+        success_logits = {"A": None, "B": None}
+
+        output = ModelOutput()
+
+        if self.use_per_frame_progress_token:
+            progress_logits, success_logits, pref_or_sim_logits = self._process_token_extraction(
+                hidden_state, input_ids, sample_type
+            )
+            output.progress_logits = progress_logits
+            output.success_logits = success_logits
+            if pref_or_sim_logits is not None:
+                output.pref_logits = pref_or_sim_logits
+        else:
+            # Process frames in multi-image mode (Gemma4 only supports multi-image)
+            boi_token_id = self.model.config.boi_token_id
+            progress_logits, success_logits = self._process_multi_image_frames(
+                hidden_state,
+                input_ids,
+                sample_type,
+                vision_start_token_id=boi_token_id,
+                vision_end_token_id=None,
+                split_token_id=self.processor.tokenizer.convert_tokens_to_ids("<|split_token|>"),
+                timing_raw=timing_raw,
+            )
 
             output.progress_logits = progress_logits
             output.success_logits = success_logits
@@ -945,6 +1044,9 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
         image_num_crops=None,
         video_grids=None,
         video_token_pooling=None,
+        # Gemma4-specific parameters
+        mm_token_type_ids=None,
+        image_position_ids=None,
         **kwargs,
     ):
         """
@@ -954,6 +1056,7 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
         - SmolVLM: _forward_smolvlm
         - Qwen2.5/Qwen3: _forward_qwen
         - Molmo2: _forward_molmo
+        - Gemma4: _forward_gemma4
 
         Returns:
             tuple: (ModelOutput, timing_raw dict)
@@ -982,6 +1085,18 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
                 image_grids=image_grids,
                 image_token_pooling=image_token_pooling,
                 image_num_crops=image_num_crops,
+                **kwargs,
+            )
+        elif "gemma-4" in self.base_model_id.lower() or "gemma4" in self.base_model_id.lower():
+            # Gemma4
+            return self._forward_gemma4(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                pixel_values=pixel_values,
+                sample_type=sample_type,
+                timing_raw=timing_raw,
+                mm_token_type_ids=mm_token_type_ids,
+                image_position_ids=image_position_ids,
                 **kwargs,
             )
         else:

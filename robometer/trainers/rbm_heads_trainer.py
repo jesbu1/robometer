@@ -165,23 +165,34 @@ class RBMHeadsTrainer(Trainer):
 
         # Get the model
         model = self.model
-        if not hasattr(model, "model") or not hasattr(model.model, "visual"):
+        has_visual = hasattr(model, "model") and hasattr(model.model, "visual")
+        has_vision_tower = hasattr(model, "model") and hasattr(model.model, "vision_tower")
+        if not has_visual and not has_vision_tower:
             logger.warning(
-                "vision_encoder_lr is set but model doesn't have visual encoder. "
+                "vision_encoder_lr is set but model doesn't have visual/vision_tower encoder. "
                 "Using default optimizer without parameter groups."
             )
             return super().create_optimizer()
 
         # Get vision encoder blocks
-        visual_encoder = model.model.visual
-        if not hasattr(visual_encoder, "blocks"):
+        if has_visual:
+            visual_encoder = model.model.visual
+            blocks_attr = "blocks"
+        else:
+            visual_encoder = model.model.vision_tower
+            blocks_attr = None  # vision_tower.encoder.layers
+
+        if blocks_attr is not None and hasattr(visual_encoder, blocks_attr):
+            blocks = getattr(visual_encoder, blocks_attr)
+        elif hasattr(visual_encoder, "encoder") and hasattr(visual_encoder.encoder, "layers"):
+            blocks = visual_encoder.encoder.layers
+        else:
             logger.warning(
                 "vision_encoder_lr is set but visual encoder doesn't have blocks. "
                 "Using default optimizer without parameter groups."
             )
             return super().create_optimizer()
 
-        blocks = visual_encoder.blocks
         total_blocks = len(blocks)
 
         if vision_encoder_num_layers > total_blocks:
@@ -214,7 +225,17 @@ class RBMHeadsTrainer(Trainer):
                         if block_idx >= (total_blocks - vision_encoder_num_layers):
                             is_vision_encoder_param = True
                 except (ValueError, IndexError):
-                    # If we can't parse the block index, skip this parameter
+                    pass
+            elif "vision_tower.encoder.layers" in name:
+                # Extract layer index for Gemma4
+                try:
+                    parts = name.split("vision_tower.encoder.layers.")
+                    if len(parts) > 1:
+                        block_part = parts[1].split(".")[0]
+                        block_idx = int(block_part)
+                        if block_idx >= (total_blocks - vision_encoder_num_layers):
+                            is_vision_encoder_param = True
+                except (ValueError, IndexError):
                     pass
 
             if is_vision_encoder_param:
@@ -2301,6 +2322,9 @@ class RBMHeadsTrainer(Trainer):
                     "image_num_crops": inputs.get("image_num_crops", None),
                     "video_grids": inputs.get("video_grids", None),
                     "video_token_pooling": inputs.get("video_token_pooling", None),
+                    # Gemma4-specific parameters
+                    "mm_token_type_ids": inputs.get("mm_token_type_ids", None),
+                    "image_position_ids": inputs.get("image_position_ids", None),
                     # Common parameters
                     "sample_type": sample_type,
                     "timing_raw": self.timing_raw,

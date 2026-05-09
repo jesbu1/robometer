@@ -193,7 +193,7 @@ class RBMBatchCollator(BaseCollator):
             #     content_extras = {}
             content_extras = {}
             return frames, content_extras
-        elif "Qwen" in self.base_model_id or "Molmo" in self.base_model_id:
+        elif "Qwen" in self.base_model_id or "Molmo" in self.base_model_id or "gemma" in self.base_model_id.lower():
             # Qwen and Molmo accept list of PIL Images directly
             if self.resized_height is not None and self.resized_width is not None:
                 content_extras = {
@@ -258,7 +258,36 @@ class RBMBatchCollator(BaseCollator):
         Returns:
             Batch of inputs
         """
-        if "Qwen" in self.base_model_id or "Molmo" in self.base_model_id:
+        if "gemma" in self.base_model_id.lower():
+            # Gemma4: use processor directly with images, no qwen_vl_utils needed
+            all_images = []
+            for conv in conversations:
+                for msg in conv:
+                    if isinstance(msg.get("content"), list):
+                        for item in msg["content"]:
+                            if item.get("type") == "image" and item.get("image") is not None:
+                                all_images.append(item["image"])
+
+            texts = [
+                self.processor.apply_chat_template(
+                    msg,
+                    tokenize=False,
+                    add_generation_prompt=add_generation_prompt,
+                )
+                for msg in conversations
+            ]
+
+            processor_kwargs = {
+                "text": texts,
+                "padding": True,
+                "truncation": False,
+                "return_tensors": "pt",
+            }
+            if all_images:
+                processor_kwargs["images"] = all_images
+
+            batch_inputs = self.processor(**processor_kwargs)
+        elif "Qwen" in self.base_model_id or "Molmo" in self.base_model_id:
             # Process all messages in one batch
             texts = [
                 self.processor.apply_chat_template(
