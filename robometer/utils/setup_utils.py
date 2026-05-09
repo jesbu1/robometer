@@ -381,9 +381,13 @@ def _load_base_model_with_unsloth(
         os.environ["HF_DEACTIVATE_ASYNC_LOAD"] = "1" 
     # Load model with unsloth
     requested_attn = extra_kwargs["attn_implementation"]
+    # For Gemma4, Unsloth requires the unsloth/ prefix
+    model_name = cfg.base_model_id
+    if is_gemma4 and not model_name.startswith("unsloth/"):
+        model_name = f"unsloth/{model_name.split('/', 1)[-1]}"
     # For Gemma4, FastVisionModel.from_pretrained returns (model, processor) instead of (model, tokenizer)
     result = FastVisionModel.from_pretrained(
-        cfg.base_model_id,
+        model_name,
         load_in_4bit=cfg.quantization,  # Use 4bit if quantization is enabled
         use_gradient_checkpointing="unsloth",  # Use unsloth's optimized checkpointing
         dtype=torch_dtype,  # Set the dtype from config,
