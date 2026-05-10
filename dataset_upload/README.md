@@ -7,6 +7,8 @@ This guide explains how to add new datasets to the Robometer training pipeline.
 ### Ready-to-Use Datasets
 - **LIBERO**: Built-in HDF5 support → [📖 LIBERO Guide](dataset_guides/LIBERO.md)
 - **AgiBotWorld**: ✅ Native streaming support → [📖 AgiBotWorld Guide](dataset_guides/AgiBotWorld.md)
+- **MolmoAct**: LeRobot parquet with per-frame views → [📖 MolmoAct Guide](dataset_guides/MolmoAct.md)
+- **MolmoAct2 YAM**: Bimanual YAM dataset with pre-recorded AV1 videos → [📖 MolmoAct2YAM Guide](dataset_guides/MolmoAct2YAM.md)
 
 ### Custom Datasets
 - **Add Your Own**: DROID, Bridge, or any custom dataset → [📖 Custom Dataset Guide](dataset_guides/CustomDataset.md)
@@ -20,6 +22,9 @@ uv run python dataset_upload/generate_hf_dataset.py --config_path=dataset_upload
 
 # LIBERO (local files)
 uv run python dataset_upload/generate_hf_dataset.py --config_path=dataset_upload/configs/data_gen.yaml
+
+# MolmoAct2 YAM (cached LeRobot collection)
+uv run python dataset_upload/generate_hf_dataset.py --config_path=dataset_upload/configs/data_gen_configs/molmoact2_yam.yaml
 ```
 
 ### Add Custom Dataset
@@ -214,6 +219,8 @@ uv run python visualize_dataset.py --dataset_path=your_robometer_dataset/your_da
 ### Individual Guides
 - **[📖 AgiBotWorld Guide](dataset_guides/AgiBotWorld.md)** - Streaming support, webdataset format
 - **[📖 LIBERO Guide](dataset_guides/LIBERO.md)** - HDF5 files, simulation data  
+- **[📖 MolmoAct Guide](dataset_guides/MolmoAct.md)** - LeRobot parquet with per-frame views
+- **[📖 MolmoAct2YAM Guide](dataset_guides/MolmoAct2YAM.md)** - Bimanual YAM dataset with AV1 videos
 - **[📖 Custom Dataset Guide](dataset_guides/CustomDataset.md)** - Add DROID, Bridge, or your own dataset
 
 Each guide includes:
