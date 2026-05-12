@@ -4,7 +4,7 @@ train_datasets:
   #- "jesbu1/motif_fixed_rfm"
   #- "myconnects/robocasa-rbm-v1.1"
   #- "jesbu1/robofac_rbm"
-  - "jesbu1/molmoact2_yam_rbm"
+  - "jesbu1/molmoact2_yam_rfm"
 
 train_subsets:
   #- ["roboarena_02_03_2026"]

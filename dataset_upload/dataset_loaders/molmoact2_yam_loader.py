@@ -5,6 +5,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 from datasets import Dataset
 from tqdm import tqdm
 
@@ -66,16 +67,14 @@ def _stable_shard_for_index(index: int, shard_modulus: int = 1000) -> str:
 def _build_video_output_path(
     output_dir: str,
     dataset_label: str,
-    episode_idx: int,
-    view_key: str,
+    trajectory_idx: int,
 ) -> tuple[str, str]:
-    shard_dir = _stable_shard_for_index(episode_idx)
-    episode_dir = os.path.join(output_dir, dataset_label.lower(), shard_dir, f"episode_{episode_idx:06d}")
-    os.makedirs(episode_dir, exist_ok=True)
-    view_name = view_key.replace("observation.images.", "")
-    filename = f"clip@{view_name}.mp4"
-    full_path = os.path.join(episode_dir, filename)
-    rel_path = os.path.join(dataset_label.lower(), shard_dir, f"episode_{episode_idx:06d}", filename)
+    shard_dir = _stable_shard_for_index(trajectory_idx)
+    traj_dir = os.path.join(output_dir, dataset_label.lower(), shard_dir, f"trajectory_{trajectory_idx:06d}")
+    os.makedirs(traj_dir, exist_ok=True)
+    filename = "trajectory.mp4"
+    full_path = os.path.join(traj_dir, filename)
+    rel_path = os.path.join(dataset_label.lower(), shard_dir, f"trajectory_{trajectory_idx:06d}", filename)
     return full_path, rel_path
 
 
@@ -91,11 +90,11 @@ def convert_molmoact2_yam_dataset_to_hf(
     if not root.exists():
         raise FileNotFoundError(f"Dataset path not found: {root}")
 
-    yam_dirs = sorted(root.glob("datasets--allenai--*yam*"))
-    if not yam_dirs:
-        raise ValueError(f"No YAM dataset directories found under {root}")
+    subdirs = sorted(root.glob("datasets--allenai--*"))
+    if not subdirs:
+        raise ValueError(f"No dataset directories found under {root}")
 
-    print(f"Found {len(yam_dirs)} YAM dataset directories")
+    print(f"Found {len(subdirs)} dataset directories")
 
     lang_model = load_sentence_transformer_model()
     lang_cache: dict[str, Any] = {}
@@ -104,11 +103,17 @@ def convert_molmoact2_yam_dataset_to_hf(
     produced = 0
     max_limit = float("inf") if (max_trajectories is None or max_trajectories == -1) else int(max_trajectories)
 
-    for yam_dir in yam_dirs:
+    VIEW_KEYS = [
+        "observation.images.left",
+        "observation.images.right",
+        "observation.images.top",
+    ]
+
+    for subdir in subdirs:
         if produced >= max_limit:
             break
 
-        snaps = sorted(yam_dir.glob("snapshots/*"))
+        snaps = sorted(subdir.glob("snapshots/*"))
         if not snaps:
             continue
         snapshot = snaps[0]
@@ -123,16 +128,21 @@ def convert_molmoact2_yam_dataset_to_hf(
         ep_parquet_dir = snapshot / "meta" / "episodes"
         ep_files = sorted(ep_parquet_dir.rglob("*.parquet"))
         if not ep_files:
-            print(f"  Skipping {yam_dir.name}: no episodes parquet found")
             continue
-        episodes_df = pd.concat([pd.read_parquet(f) for f in ep_files], ignore_index=True)
-        episodes_df = episodes_df.sort_values("episode_index").reset_index(drop=True)
 
-        VIEW_KEYS = [
-            "observation.images.left",
-            "observation.images.right",
-            "observation.images.top",
-        ]
+        ep_cols_needed = ["episode_index"]
+        for vk in VIEW_KEYS:
+            for suffix in ["chunk_index", "file_index", "from_timestamp", "to_timestamp"]:
+                ep_cols_needed.append(f"videos/{vk}/{suffix}")
+        ep_rows = []
+        for f in ep_files:
+            table = pq.read_table(f, columns=ep_cols_needed)
+            names = table.column_names
+            for batch in table.to_batches():
+                for i in range(batch.num_rows):
+                    ep_rows.append({name: batch.column(j)[i].as_py() for j, name in enumerate(names)})
+        episodes_df = pd.DataFrame(ep_rows)
+        episodes_df = episodes_df.sort_values("episode_index").reset_index(drop=True)
 
         total_episodes = len(episodes_df)
         episodes_processed = 0
@@ -150,58 +160,55 @@ def convert_molmoact2_yam_dataset_to_hf(
                 lang_cache[task_text] = lang_model.encode(task_text)
             lang_vec = lang_cache[task_text]
 
-            for view_key in VIEW_KEYS:
-                if produced >= max_limit:
-                    break
-                v_chunk = int(ep_row[f"videos/{view_key}/chunk_index"])
-                v_file = int(ep_row[f"videos/{view_key}/file_index"])
-                from_ts = float(ep_row[f"videos/{view_key}/from_timestamp"])
-                to_ts = float(ep_row[f"videos/{view_key}/to_timestamp"])
+            view_key = "observation.images.top"
+            v_chunk = int(ep_row[f"videos/{view_key}/chunk_index"])
+            v_file = int(ep_row[f"videos/{view_key}/file_index"])
+            from_ts = float(ep_row[f"videos/{view_key}/from_timestamp"])
+            to_ts = float(ep_row[f"videos/{view_key}/to_timestamp"])
 
-                video_path = (
-                    snapshot / "videos" / view_key / f"chunk-{v_chunk:03d}" / f"file-{v_file:03d}.mp4"
-                )
-                if not video_path.exists():
-                    continue
+            video_path = (
+                snapshot / "videos" / view_key / f"chunk-{v_chunk:03d}" / f"file-{v_file:03d}.mp4"
+            )
+            if not video_path.exists():
+                continue
 
-                full_video_path, rel_video_path = _build_video_output_path(
-                    output_dir=output_dir,
-                    dataset_label=dataset_name,
-                    episode_idx=ep_idx,
-                    view_key=view_key,
-                )
+            full_video_path, rel_video_path = _build_video_output_path(
+                output_dir=output_dir,
+                dataset_label=dataset_name,
+                trajectory_idx=produced,
+            )
 
-                frame_loader = _make_frame_loader(str(video_path), from_ts, to_ts, target_fps=fps)
+            frame_loader = _make_frame_loader(str(video_path), from_ts, to_ts, target_fps=fps)
 
-                traj_dict = {
-                    "id": generate_unique_id(),
-                    "frames": frame_loader,
-                    "task": task_text,
-                    "is_robot": True,
-                    "quality_label": "successful",
-                    "preference_group_id": None,
-                    "preference_rank": None,
-                }
+            traj_dict = {
+                "id": generate_unique_id(),
+                "frames": frame_loader,
+                "task": task_text,
+                "is_robot": True,
+                "quality_label": "successful",
+                "preference_group_id": None,
+                "preference_rank": None,
+            }
 
-                entry = create_hf_trajectory(
-                    traj_dict=traj_dict,
-                    video_path=full_video_path,
-                    lang_vector=lang_vec,
-                    max_frames=max_frames,
-                    dataset_name=dataset_name,
-                    use_video=True,
-                    fps=fps,
-                )
-                if entry:
-                    entry["frames"] = rel_video_path
-                    entries.append(entry)
-                    produced += 1
+            entry = create_hf_trajectory(
+                traj_dict=traj_dict,
+                video_path=full_video_path,
+                lang_vector=lang_vec,
+                max_frames=max_frames,
+                dataset_name=dataset_name,
+                use_video=True,
+                fps=fps,
+            )
+            if entry:
+                entry["frames"] = rel_video_path
+                entries.append(entry)
+                produced += 1
 
             episodes_processed += 1
-            if produced >= max_limit:
-                break
 
-        print(f"  Processed {yam_dir.name}: {episodes_processed}/{total_episodes} episodes")
+        print(f"  {subdir.name}: {episodes_processed}/{total_episodes} episodes")
+        if produced >= max_limit:
+            break
 
     if not entries:
         return Dataset.from_dict({
