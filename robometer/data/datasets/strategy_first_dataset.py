@@ -1,5 +1,6 @@
 from collections import defaultdict
 from typing import Dict, List, Optional, Any
+import random as global_random
 from random import Random
 
 from robometer.data.datasets.base import BaseDataset
@@ -117,6 +118,7 @@ class StrategyFirstDataset(BaseDataset):
             Dictionary containing random state for dataset and all samplers
         """
         state = {
+            "global_random": global_random.getstate(),
             "dataset": self._local_random.getstate() if hasattr(self, "_local_random") else None,
             "pref_sampler": self.pref_sampler._local_random.getstate() if self.pref_sampler else None,
             "progress_sampler": self.progress_sampler._local_random.getstate() if self.progress_sampler else None,
@@ -129,12 +131,29 @@ class StrategyFirstDataset(BaseDataset):
         Args:
             state: Dictionary containing random state for dataset and all samplers
         """
+        def _fix_state(s):
+            """JSON serialization turns tuples into lists; random.setstate needs tuples."""
+            if s is None:
+                return None
+            version, seed_state, gauss = s
+            return (version, tuple(seed_state), gauss)
+
+        if "global_random" in state and state["global_random"] is not None:
+            fixed = _fix_state(state["global_random"])
+            if fixed is not None:
+                global_random.setstate(fixed)
         if state.get("dataset") and hasattr(self, "_local_random"):
-            self._local_random.setstate(state["dataset"])
+            fixed = _fix_state(state["dataset"])
+            if fixed is not None:
+                self._local_random.setstate(fixed)
         if state.get("pref_sampler") and self.pref_sampler:
-            self.pref_sampler._local_random.setstate(state["pref_sampler"])
+            fixed = _fix_state(state["pref_sampler"])
+            if fixed is not None:
+                self.pref_sampler._local_random.setstate(fixed)
         if state.get("progress_sampler") and self.progress_sampler:
-            self.progress_sampler._local_random.setstate(state["progress_sampler"])
+            fixed = _fix_state(state["progress_sampler"])
+            if fixed is not None:
+                self.progress_sampler._local_random.setstate(fixed)
 
     def __len__(self):
         if self.max_samples is None:

@@ -127,13 +127,13 @@ custom_eval:
   # during training 
   eval_types: ["policy_ranking", "confusion_matrix", "reward_alignment"]
   policy_ranking: 
-    - mw
+    - rbm-1m-ood
   confusion_matrix: 
-    - mw
+    - rbm-1m-ood
   reward_alignment: 
-    - mw
+    - rbm-1m-ood
   quality_preference:
-    - mw
+    - rbm-1m-ood
   comparisons_per_task: 5  # Limit number of quality preference comparisons per task. null = use all comparisons. Uniformly samples if limit is set.
   max_comparisons: null  # Limit total number of quality preference comparisons across all tasks. null = use all comparisons. Uniformly samples if limit is set.
   num_examples_per_quality_pr: 5  # Number of trajectories to sample per quality label for policy ranking evaluation. Only tasks with multiple quality labels are used.
@@ -233,7 +233,7 @@ logging:
   save_processor: true
   log_to: [wandb]
   wandb_project: "robometer"
-  wandb_entity: clvr
+  wandb_entity: tri
   wandb_notes: "training Robometer"
   
   # SaveBestCallback configuration

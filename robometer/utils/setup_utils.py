@@ -515,6 +515,11 @@ def _setup_processor_and_tokenizer(cfg: ModelConfig) -> AutoProcessor:
     if processor.tokenizer.pad_token is None:
         processor.tokenizer.pad_token = processor.tokenizer.eos_token
 
+    # Some models (e.g., base variants) have a chat_template on the tokenizer but not
+    # on the processor. apply_chat_template only checks the processor, so copy it over.
+    if processor.chat_template is None and processor.tokenizer.chat_template is not None:
+        processor.chat_template = processor.tokenizer.chat_template
+
     return processor
 
 

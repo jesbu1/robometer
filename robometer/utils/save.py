@@ -48,6 +48,9 @@ def update_cfg_with_pretrained_ckpt(
     if not resume_from_checkpoint:
         return
 
+    # Strip any surrounding quotes that Hydra may have left on the value
+    resume_from_checkpoint = resume_from_checkpoint.strip("'\"")
+
     hub_token = os.environ.get("HF_TOKEN")
     is_hub = "/" in resume_from_checkpoint and not resume_from_checkpoint.startswith(("/", "./", "../"))
     config_path: Optional[str] = None
@@ -122,6 +125,9 @@ def resolve_checkpoint_path(checkpoint_path: Optional[str], hub_token: Optional[
     if not checkpoint_path:
         return None
 
+    # Strip any surrounding quotes that Hydra may have left on the value
+    checkpoint_path = checkpoint_path.strip("'\"")
+
     # If it's a local path, return as-is
     if checkpoint_path.startswith("/") or checkpoint_path.startswith("./") or checkpoint_path.startswith("../"):
         logger.info(f"Using local checkpoint: {checkpoint_path}")
@@ -163,6 +169,9 @@ def parse_hf_model_id_and_revision(hf_model_id: str, model_name: str = "model") 
         - repo_id: The repository ID without the @revision suffix
         - revision_to_load: The revision/tag to load, or None for latest
     """
+    # Strip any surrounding quotes that Hydra may have left on the value
+    hf_model_id = hf_model_id.strip("'\"")
+
     # Allow users to specify explicit revisions via repo@revision
     if "@" in hf_model_id:
         repo_id, explicit_revision = hf_model_id.split("@", 1)
@@ -469,9 +478,16 @@ class SaveBestCallback(TrainerCallback):
             self._trainer.save_model(ckpt_dir)
 
         if args.should_save:
-            self._trainer.save_state()  # trainer_state.json etc. in output_dir
-            # save the trainer_state.json to the actual checkpoint directory
-            shutil.copy(os.path.join(args.output_dir, "trainer_state.json"), ckpt_dir)
+            self._trainer.save_state()
+            self._trainer._save_optimizer_and_scheduler(args.output_dir)
+            try:
+                self._trainer._save_scaler(args.output_dir)
+            except Exception:
+                pass
+            for state_file in ("trainer_state.json", "optimizer.pt", "scheduler.pt", "scaler.pt"):
+                src = os.path.join(args.output_dir, state_file)
+                if os.path.exists(src):
+                    shutil.copy(src, ckpt_dir)
 
         # Save metrics to JSON file
         if metrics is not None:

@@ -47,6 +47,7 @@ class RBMDataset(BaseDataset):
             Dictionary containing random state for all samplers
         """
         state = {
+            "global_random": random.getstate(),
             "pref_sampler": self.pref_sampler._local_random.getstate() if self.pref_sampler else None,
             "progress_sampler": self.progress_sampler._local_random.getstate() if self.progress_sampler else None,
         }
@@ -56,12 +57,27 @@ class RBMDataset(BaseDataset):
         """Restore random state from checkpoint.
 
         Args:
-            state: Dictionary containing random state for all samplers
+            state: Dictionary containing random state for dataset and all samplers
         """
+        def _fix_state(s):
+            """JSON serialization turns tuples into lists; random.setstate needs tuples."""
+            if s is None:
+                return None
+            version, seed_state, gauss = s
+            return (version, tuple(seed_state), gauss)
+
+        if "global_random" in state and state["global_random"] is not None:
+            fixed = _fix_state(state["global_random"])
+            if fixed is not None:
+                random.setstate(fixed)
         if state.get("pref_sampler") and self.pref_sampler:
-            self.pref_sampler._local_random.setstate(state["pref_sampler"])
+            fixed = _fix_state(state["pref_sampler"])
+            if fixed is not None:
+                self.pref_sampler._local_random.setstate(fixed)
         if state.get("progress_sampler") and self.progress_sampler:
-            self.progress_sampler._local_random.setstate(state["progress_sampler"])
+            fixed = _fix_state(state["progress_sampler"])
+            if fixed is not None:
+                self.progress_sampler._local_random.setstate(fixed)
 
     def get_resample_attempt_stats(self):
         return self._resample_attempt_stats
