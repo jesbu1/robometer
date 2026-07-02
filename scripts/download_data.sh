@@ -144,6 +144,7 @@ repos=(
   jesbu1/robofac_rbm
   # rbm 1.1 data starts here
   villekuosmanen/armnetbench_robometer_v01
+  ykorkmaz/molmoact2_so100_101_rbm
 )
 
 # ------------------------------
