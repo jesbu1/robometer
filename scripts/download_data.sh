@@ -145,6 +145,12 @@ repos=(
   # rbm 1.1 data starts here
   villekuosmanen/armnetbench_robometer_v01
   ykorkmaz/molmoact2_so100_101_rbm
+  ykorkmaz/abc_subset_rbm
+  jesbu1/roboarena_02_03_2026
+  jesbu1/molmoact2_yam_rfm 
+  jesbu1/robofac_rbm 
+  myconnects/robocasa-rbm-v1.1 
+  jesbu1/motif_fixed_rfm jesbu1/unitree_wbt_rfm
 )
 
 # ------------------------------
