@@ -107,7 +107,7 @@ quantization = [
 # ==================================================================================
 [dependency-groups]
 robometer = [
-    "transformers>=5.0",
+    "transformers>5.2",
     "trl==0.20.0",
     "unsloth>=2026.3.4",
 ]

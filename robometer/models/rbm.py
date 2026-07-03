@@ -31,6 +31,9 @@ from robometer.utils.timer import _timer
 from robometer.utils.logger import get_logger
 
 logger = get_logger()
+from robometer.utils.logger import get_logger
+
+logger = get_logger()
 
 
 def squeeze_last_safe(x: torch.Tensor) -> torch.Tensor:
@@ -97,6 +100,15 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
 
         self.all_tied_weights_keys = {}
 
+        # Detect if base_model is wrapped (e.g. Qwen3_5ForCausalLM wrapping Qwen3_5Model)
+        # so load_state_dict can remap keys if the checkpoint was saved with a different
+        # wrapping (e.g. unsloth version mismatch).
+        self._base_model_has_inner_model = (
+            base_model is not None
+            and hasattr(base_model, "model")
+            and isinstance(base_model.model, torch.nn.Module)
+        )
+
         self.processor = processor
         self.tokenizer = tokenizer
         self.model_config = model_config
@@ -116,7 +128,78 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
         # Always create the attention pooling projection so checkpoints can be loaded across pooling modes.
         self.frame_pool_attn = nn.Linear(hidden_size, 1, bias=False).to(dtype=self.model_dtype)
 
-        # Validate that use_per_frame_progress_token requires use_multi_image
+    def load_state_dict(self, state_dict, strict=True, assign=False):
+        """Override to remap keys when the base model wrapping differs from the checkpoint."""
+        # Check for size mismatches BEFORE loading — these silently skip weights
+        current = self.state_dict()
+        for ckpt_key, ckpt_tensor in list(state_dict.items()):
+            if ckpt_key in current and current[ckpt_key].shape != ckpt_tensor.shape:
+                logger.warning(
+                    f"Size mismatch for '{ckpt_key}': "
+                    f"checkpoint {list(ckpt_tensor.shape)} vs model {list(current[ckpt_key].shape)}. "
+                    f"This weight will NOT be loaded — the model retains its current values."
+                )
+
+        if self._base_model_has_inner_model and hasattr(self, 'model'):
+            model_param_keys = set()
+            for name, _ in self.model.named_parameters():
+                model_param_keys.add(f"model.{name}")
+            for name, _ in self.model.named_buffers():
+                model_param_keys.add(f"model.{name}")
+
+            # If the checkpoint has keys like model.visual.* but the model
+            # expects model.model.visual.* (due to ForCausalLM wrapper),
+            # remap them.
+            remap_needed = False
+            for ckpt_key in list(state_dict.keys()):
+                if not ckpt_key.startswith("model."):
+                    continue
+                if ckpt_key in model_param_keys:
+                    continue
+                # Try adding extra "model." prefix: model.X -> model.model.X
+                candidate = f"model.model.{ckpt_key[6:]}"  # skip "model."
+                if candidate in model_param_keys:
+                    state_dict[candidate] = state_dict.pop(ckpt_key)
+                    remap_needed = True
+
+            # Also handle the reverse: checkpoint has model.model.* but model expects model.*
+            for ckpt_key in list(state_dict.keys()):
+                if not ckpt_key.startswith("model."):
+                    continue
+                if ckpt_key in model_param_keys:
+                    continue
+                if not ckpt_key.startswith("model.model."):
+                    continue
+                # Try removing extra "model." prefix: model.model.X -> model.X
+                candidate = f"model.{ckpt_key[12:]}"  # skip "model.model."
+                if candidate in model_param_keys:
+                    state_dict[candidate] = state_dict.pop(ckpt_key)
+                    remap_needed = True
+
+            if remap_needed:
+                logger.warning(
+                    "Remapped checkpoint keys due to base model wrapping mismatch "
+                    "(likely unsloth version difference between checkpoint save and load)."
+                )
+
+            # Verify no remaining mismatches after remapping
+            leftover_unexpected = set()
+            current_keys = {name for name, _ in self.named_parameters()}
+            current_keys |= {name for name, _ in self.named_buffers()}
+            for ckpt_key in state_dict:
+                if ckpt_key not in current_keys:
+                    leftover_unexpected.add(ckpt_key)
+
+            if leftover_unexpected:
+                raise RuntimeError(
+                    f"Checkpoint keys not found in model after remapping. "
+                    f"Unexpected keys in checkpoint: {sorted(leftover_unexpected)[:20]}. "
+                    f"Model expects these keys to exist. Check unsloth/transformers version mismatch."
+                )
+
+        return super().load_state_dict(state_dict, strict=strict, assign=assign)
+
+    # Validate that use_per_frame_progress_token requires use_multi_image
         if self.use_per_frame_progress_token and not self.use_multi_image:
             raise ValueError(
                 "use_per_frame_progress_token=True requires use_multi_image=True. "

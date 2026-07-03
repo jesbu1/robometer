@@ -1858,9 +1858,10 @@ class RBMHeadsTrainer(Trainer):
         # Check for NaN in total loss before returning
         if isinstance(total_loss, torch.Tensor) and torch.isnan(total_loss).any():
             logger.warning(f"NaN detected in total_loss, replacing with 0.0")
-            total_loss = torch.tensor(0.0, device=total_loss.device, dtype=total_loss.dtype)
+            total_loss = torch.tensor(0.0, device=total_loss.device, dtype=total_loss.dtype,
+                                      requires_grad=total_loss.requires_grad)
         elif isinstance(total_loss, (int, float)):
-            total_loss = torch.tensor(total_loss, dtype=torch.float32)
+            total_loss = torch.tensor(total_loss, dtype=torch.float32, requires_grad=True)
 
         # Always store custom losses for logging (even when return_outputs=False)
         self.log_metadata = log_metadata
@@ -2405,7 +2406,8 @@ class RBMHeadsTrainer(Trainer):
             if training:
                 breakpoint()
             logger.warning(f"NaN detected in progress loss, replacing with 0.0")
-            final_loss = torch.tensor(0.0, device=final_loss.device, dtype=final_loss.dtype)
+            final_loss = torch.tensor(0.0, device=final_loss.device, dtype=final_loss.dtype,
+                                      requires_grad=final_loss.requires_grad)
 
         if return_outputs:
             outputs_dict = {}
@@ -2544,9 +2546,10 @@ class RBMHeadsTrainer(Trainer):
         if torch.isnan(final_loss).any():
             logger.warning(f"NaN detected in preference loss, replacing with 0.0")
             if isinstance(final_loss, torch.Tensor):
-                final_loss = torch.tensor(0.0, device=final_loss.device, dtype=final_loss.dtype)
+                final_loss = torch.tensor(0.0, device=final_loss.device, dtype=final_loss.dtype,
+                                          requires_grad=final_loss.requires_grad)
             else:
-                final_loss = torch.tensor(0.0)
+                final_loss = torch.tensor(0.0, requires_grad=True)
 
         if return_outputs:
             outputs_dict = {}

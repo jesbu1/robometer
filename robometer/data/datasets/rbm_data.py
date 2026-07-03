@@ -1,5 +1,7 @@
 import random
 
+import numpy as np
+
 from robometer.data.datasets.base import BaseDataset
 from robometer.data.samplers.pref import PrefSampler
 from robometer.data.samplers.progress import ProgressSampler
@@ -46,8 +48,12 @@ class RBMDataset(BaseDataset):
         Returns:
             Dictionary containing random state for all samplers
         """
+        np_state = np.random.get_state()
+        np_serializable = (np_state[0], np_state[1].tolist(), np_state[2], np_state[3], np_state[4])
+
         state = {
             "global_random": random.getstate(),
+            "global_numpy": np_serializable,
             "pref_sampler": self.pref_sampler._local_random.getstate() if self.pref_sampler else None,
             "progress_sampler": self.progress_sampler._local_random.getstate() if self.progress_sampler else None,
         }
@@ -70,6 +76,9 @@ class RBMDataset(BaseDataset):
             fixed = _fix_state(state["global_random"])
             if fixed is not None:
                 random.setstate(fixed)
+        if "global_numpy" in state and state["global_numpy"] is not None:
+            ns = state["global_numpy"]
+            np.random.set_state((ns[0], np.array(ns[1], dtype="uint32"), ns[2], ns[3], ns[4]))
         if state.get("pref_sampler") and self.pref_sampler:
             fixed = _fix_state(state["pref_sampler"])
             if fixed is not None:

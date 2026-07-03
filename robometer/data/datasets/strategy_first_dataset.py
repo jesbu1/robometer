@@ -3,6 +3,8 @@ from typing import Dict, List, Optional, Any
 import random as global_random
 from random import Random
 
+import numpy as np
+
 from robometer.data.datasets.base import BaseDataset
 from robometer.data.samplers.pref import PrefSampler
 from robometer.data.samplers.progress import ProgressSampler
@@ -117,8 +119,12 @@ class StrategyFirstDataset(BaseDataset):
         Returns:
             Dictionary containing random state for dataset and all samplers
         """
+        np_state = np.random.get_state()
+        np_serializable = (np_state[0], np_state[1].tolist(), np_state[2], np_state[3], np_state[4])
+
         state = {
             "global_random": global_random.getstate(),
+            "global_numpy": np_serializable,
             "dataset": self._local_random.getstate() if hasattr(self, "_local_random") else None,
             "pref_sampler": self.pref_sampler._local_random.getstate() if self.pref_sampler else None,
             "progress_sampler": self.progress_sampler._local_random.getstate() if self.progress_sampler else None,
@@ -142,6 +148,9 @@ class StrategyFirstDataset(BaseDataset):
             fixed = _fix_state(state["global_random"])
             if fixed is not None:
                 global_random.setstate(fixed)
+        if "global_numpy" in state and state["global_numpy"] is not None:
+            ns = state["global_numpy"]
+            np.random.set_state((ns[0], np.array(ns[1], dtype="uint32"), ns[2], ns[3], ns[4]))
         if state.get("dataset") and hasattr(self, "_local_random"):
             fixed = _fix_state(state["dataset"])
             if fixed is not None:
