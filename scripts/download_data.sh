@@ -141,7 +141,6 @@ repos=(
   jesbu1/roboreward_rfm_high_res
   jesbu1/rfm_new_mit_franka_rfm_nowrist
   ykorkmaz/usc_trossen_rfm
-  jesbu1/robofac_rbm
   # rbm 1.1 data starts here
   villekuosmanen/armnetbench_robometer_v01
   ykorkmaz/molmoact2_so100_101_rbm
