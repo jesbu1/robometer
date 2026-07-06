@@ -389,6 +389,40 @@ DATASET_MAP = {
             "abraranwar_libero_rfm_libero256_90",
         ],
     },
+    "rbm-1.1-new-only": {
+        "train": [
+            "jesbu1_molmoact2_yam_rfm_molmoact2_yam",
+            "jesbu1_motif_fixed_rfm_motif_fixed_rfm",
+            "jesbu1_roboarena_02_03_2026_roboarena_02_03_2026",
+            "jesbu1_robofac_rbm_robofac",
+            "jesbu1_unitree_wbt_rfm_g1_wbt_brainco_collect_plates_into_dishwasher",
+            "jesbu1_unitree_wbt_rfm_g1_wbt_brainco_make_the_bed",
+            "jesbu1_unitree_wbt_rfm_g1_wbt_brainco_pickup_pillow",
+            "jesbu1_unitree_wbt_rfm_g1_wbt_inspire_put_clothes_into_basket",
+            "jesbu1_unitree_wbt_rfm_g1_wbt_inspire_put_clothes_into_washing_machine",
+            "myconnects_robocasa-rbm-v1.1_robocasa_v1_1",
+            "villekuosmanen_armnetbench_robometer_v01_bimanual_so101",
+            "villekuosmanen_armnetbench_robometer_v01_so101",
+            "ykorkmaz_abc_subset_rbm_abc_130k",
+            "ykorkmaz_molmoact2_so100_101_rbm_molmoact2_so100_101",
+        ],
+        "eval": [
+            "jesbu1_molmoact2_yam_rfm_molmoact2_yam",
+            "jesbu1_motif_fixed_rfm_motif_fixed_rfm",
+            "jesbu1_roboarena_02_03_2026_roboarena_02_03_2026",
+            "jesbu1_robofac_rbm_robofac",
+            "jesbu1_unitree_wbt_rfm_g1_wbt_brainco_collect_plates_into_dishwasher",
+            "jesbu1_unitree_wbt_rfm_g1_wbt_brainco_make_the_bed",
+            "jesbu1_unitree_wbt_rfm_g1_wbt_brainco_pickup_pillow",
+            "jesbu1_unitree_wbt_rfm_g1_wbt_inspire_put_clothes_into_basket",
+            "jesbu1_unitree_wbt_rfm_g1_wbt_inspire_put_clothes_into_washing_machine",
+            "myconnects_robocasa-rbm-v1.1_robocasa_v1_1",
+            "villekuosmanen_armnetbench_robometer_v01_bimanual_so101",
+            "villekuosmanen_armnetbench_robometer_v01_so101",
+            "ykorkmaz_abc_subset_rbm_abc_130k",
+            "ykorkmaz_molmoact2_so100_101_rbm_molmoact2_so100_101",
+        ],
+    },
     "rbm-1m-ood": {
         "eval": [
             # "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",  # putting this here for now
@@ -471,6 +505,7 @@ DATA_SOURCE_CATEGORY = {
         "racer_train",
         "racer_val",
         "roboarena_eval_debug_nowrist",
+        "armnetbench",
     ],
     "franka": [
         "oxe_droid",
