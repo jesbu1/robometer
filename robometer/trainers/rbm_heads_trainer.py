@@ -361,13 +361,42 @@ class RBMHeadsTrainer(Trainer):
         """
         Override train method to perform post-checkpoint reset.
         """
-        # If resuming from checkpoint, set flag for reset in first training step
+        # If resuming from checkpoint, capture pre-load weights to verify
         if resume_from_checkpoint is not None:
             logger.info(f"Resuming from checkpoint: {resume_from_checkpoint}")
             self._just_resumed_from_checkpoint = True
+            model = self.model
+            pre_weights = {}
+            if hasattr(model, 'progress_head'):
+                pre_weights['progress_head'] = model.progress_head[0].weight.clone()
+            if hasattr(model, 'preference_head'):
+                pre_weights['preference_head'] = model.preference_head[0].weight.clone()
+            if hasattr(model, 'success_head'):
+                pre_weights['success_head'] = model.success_head[0].weight.clone()
 
         # Call parent train method
         result = super().train(resume_from_checkpoint=resume_from_checkpoint, **kwargs)
+
+        if resume_from_checkpoint is not None and pre_weights:
+            model = self.model
+            if hasattr(model, 'progress_head'):
+                post = model.progress_head[0].weight
+                pre = pre_weights['progress_head']
+                changed = not torch.equal(pre, post)
+                logger.warning(
+                    f"[RESUME VERIFY] progress_head[0].weight: "
+                    f"pre_sum={pre.sum().item():.2f} post_sum={post.sum().item():.2f} "
+                    f"changed={changed}"
+                )
+            if hasattr(model, 'success_head'):
+                post = model.success_head[0].weight
+                pre = pre_weights['success_head']
+                changed = not torch.equal(pre, post)
+                logger.warning(
+                    f"[RESUME VERIFY] success_head[0].weight: "
+                    f"pre_sum={pre.sum().item():.2f} post_sum={post.sum().item():.2f} "
+                    f"changed={changed}"
+                )
 
         return result
 
@@ -1832,9 +1861,12 @@ class RBMHeadsTrainer(Trainer):
             if isinstance(value, torch.Tensor):
                 logger.trace(f"\t{key}: shape={value.shape}")
         # Check for NaN in total loss before returning
-        if torch.isnan(total_loss).any():
+        if isinstance(total_loss, torch.Tensor) and torch.isnan(total_loss).any():
             logger.warning(f"NaN detected in total_loss, replacing with 0.0")
-            total_loss = torch.tensor(0.0, device=total_loss.device, dtype=total_loss.dtype)
+            total_loss = torch.tensor(0.0, device=total_loss.device, dtype=total_loss.dtype,
+                                      requires_grad=total_loss.requires_grad)
+        elif isinstance(total_loss, (int, float)):
+            total_loss = torch.tensor(total_loss, dtype=torch.float32, requires_grad=True)
 
         # Always store custom losses for logging (even when return_outputs=False)
         self.log_metadata = log_metadata
@@ -1905,9 +1937,7 @@ class RBMHeadsTrainer(Trainer):
                             f"Trajectory {i} has quality_label='{quality_label}' but success_labels are not all 0s. "
                             f"Found non-zero labels: {(sample_success_labels != 0.0).sum().item()} out of {len(sample_success_labels)}"
                         )
-                        import ipdb
-
-                        ipdb.set_trace()
+                        breakpoint()
 
                     # Include all frames for this trajectory in the mask
                     quality_mask[i, :] = 1.0
@@ -2012,8 +2042,15 @@ class RBMHeadsTrainer(Trainer):
         success_probs_flat = success_probs[combined_mask > 0]
         success_labels_flat = success_labels[combined_mask > 0]
 
-        # Compute AUPRC across all valid frames
-        if success_probs_flat.numel() > 0 and len(torch.unique(success_labels_flat)) > 1:
+        # Check for NaN in success outputs before computing metrics
+        if torch.isnan(success_probs_flat).any() or torch.isnan(success_labels_flat).any():
+            logger.warning(
+                f"NaN detected in success_probs or success_labels, skipping AUPRC. "
+                f"logits min={success_logits.min().item():.4f} max={success_logits.max().item():.4f} "
+                f"has_nan={torch.isnan(success_logits).any().item()}"
+            )
+            batch_auprc = torch.tensor(0.0, device=success_loss.device, dtype=torch.float32)
+        elif success_probs_flat.numel() > 0 and len(torch.unique(success_labels_flat)) > 1:
             auprc = average_precision_score(
                 t2n(success_labels_flat),
                 t2n(success_probs_flat),
@@ -2267,6 +2304,8 @@ class RBMHeadsTrainer(Trainer):
                     mean_value = non_nan_masked_metric.mean().item()
                     outputs_dict[f"{prefix}_ds_{metric_name}/{data_source}"] = mean_value
 
+    _VISION_TENSOR_KEYS = ("pixel_values", "pixel_values_videos")
+
     def forward_model(self, model, inputs, sample_type="progress"):
         """Forward pass for the model."""
         logger.trace(f"forward_model: Starting forward pass for sample_type={sample_type}")
@@ -2312,6 +2351,12 @@ class RBMHeadsTrainer(Trainer):
                 }
                 model_output, model_timing_raw = model(**model_kwargs)
                 logger.trace("forward_model: Model forward pass completed")
+
+            # Free large vision tensors from the caller's dict so they can be
+            # garbage-collected during loss computation instead of staying alive
+            # for the entire training step.
+            for k in self._VISION_TENSOR_KEYS:
+                inputs.pop(k, None)
 
             logger.trace("forward_model: Updating timing and returning")
             self.timing_raw.update(model_timing_raw)
@@ -2364,11 +2409,10 @@ class RBMHeadsTrainer(Trainer):
         # Check for NaN in final loss
         if torch.isnan(final_loss).any():
             if training:
-                import ipdb
-
-                ipdb.set_trace()
+                breakpoint()
             logger.warning(f"NaN detected in progress loss, replacing with 0.0")
-            final_loss = torch.tensor(0.0, device=final_loss.device, dtype=final_loss.dtype)
+            final_loss = torch.tensor(0.0, device=final_loss.device, dtype=final_loss.dtype,
+                                      requires_grad=final_loss.requires_grad)
 
         if return_outputs:
             outputs_dict = {}
@@ -2505,7 +2549,12 @@ class RBMHeadsTrainer(Trainer):
 
         # Check for NaN in final loss
         if torch.isnan(final_loss).any():
-            logger.warning(f"NaN detected in preference loss")
+            logger.warning(f"NaN detected in preference loss, replacing with 0.0")
+            if isinstance(final_loss, torch.Tensor):
+                final_loss = torch.tensor(0.0, device=final_loss.device, dtype=final_loss.dtype,
+                                          requires_grad=final_loss.requires_grad)
+            else:
+                final_loss = torch.tensor(0.0, requires_grad=True)
 
         if return_outputs:
             outputs_dict = {}

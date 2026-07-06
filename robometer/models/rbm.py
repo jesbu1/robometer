@@ -16,6 +16,11 @@ try:
 except ImportError:
     Qwen3VLModel = None
 
+try:
+    from transformers import Qwen3_5Model
+except ImportError:
+    Qwen3_5Model = None
+
 # from transformers import AutoModelForImageTextToText as Molmo2VLModel  # Molmo2 uses AutoModelForImageTextToText
 from transformers import SmolVLMModel
 import torch.distributed as dist
@@ -56,6 +61,9 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
         elif "Qwen2.5" in base_model_id:
             hidden_size = config.hidden_size
             self.model_cls = Qwen2_5_VLModel
+        elif "Qwen3.5" in base_model_id:
+            hidden_size = config.text_config.hidden_size
+            self.model_cls = Qwen3_5Model
         elif "Qwen3" in base_model_id:
             hidden_size = config.text_config.hidden_size
             self.model_cls = Qwen3VLModel
@@ -88,6 +96,12 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
         self.success_head = self.success_head.to(dtype=self.model_dtype)
 
         self.all_tied_weights_keys = {}
+        # Detect wrapped base models so load_state_dict can remap keys when a
+        # checkpoint was saved with a different wrapper structure.
+        self._base_model_has_inner_model = (
+            hasattr(self.model, "model")
+            and isinstance(self.model.model, torch.nn.Module)
+        )
 
         self.processor = processor
         self.tokenizer = tokenizer
@@ -122,9 +136,99 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
                 "Please set data.use_multi_image=True to use Molmo2 with multi-image input."
             )
 
+        # When the vision encoder is frozen, wrap its forward in torch.no_grad()
+        # so PyTorch doesn't store any activation graph through the vision tower.
+        if not self.model_config.train_vision_encoder and hasattr(self.model, "visual"):
+            original_visual_forward = self.model.visual.forward
+
+            @torch.no_grad()
+            def frozen_visual_forward(*args, **kwargs):
+                return original_visual_forward(*args, **kwargs)
+
+            self.model.visual.forward = frozen_visual_forward
+
+    def load_state_dict(self, state_dict, strict=True, assign=False):
+        """Override to remap keys when the base model wrapping differs from the checkpoint."""
+        # Check for size mismatches BEFORE loading; these silently skip weights
+        current = self.state_dict()
+        for ckpt_key, ckpt_tensor in list(state_dict.items()):
+            if ckpt_key in current and current[ckpt_key].shape != ckpt_tensor.shape:
+                logger.warning(
+                    f"Size mismatch for '{ckpt_key}': "
+                    f"checkpoint {list(ckpt_tensor.shape)} vs model {list(current[ckpt_key].shape)}. "
+                    f"This weight will NOT be loaded; the model retains its current values."
+                )
+
+        if self._base_model_has_inner_model and hasattr(self, 'model'):
+            model_param_keys = set()
+            for name, _ in self.model.named_parameters():
+                model_param_keys.add(f"model.{name}")
+            for name, _ in self.model.named_buffers():
+                model_param_keys.add(f"model.{name}")
+
+            # If the checkpoint has keys like model.visual.* but the model
+            # expects model.model.visual.* (due to ForCausalLM wrapper),
+            # remap them.
+            remap_needed = False
+            for ckpt_key in list(state_dict.keys()):
+                if not ckpt_key.startswith("model."):
+                    continue
+                if ckpt_key in model_param_keys:
+                    continue
+                # Try adding extra "model." prefix: model.X -> model.model.X
+                candidate = f"model.model.{ckpt_key[6:]}"  # skip "model."
+                if candidate in model_param_keys:
+                    state_dict[candidate] = state_dict.pop(ckpt_key)
+                    remap_needed = True
+
+            # Also handle the reverse: checkpoint has model.model.* but model expects model.*
+            for ckpt_key in list(state_dict.keys()):
+                if not ckpt_key.startswith("model."):
+                    continue
+                if ckpt_key in model_param_keys:
+                    continue
+                if not ckpt_key.startswith("model.model."):
+                    continue
+                # Try removing extra "model." prefix: model.model.X -> model.X
+                candidate = f"model.{ckpt_key[12:]}"  # skip "model.model."
+                if candidate in model_param_keys:
+                    state_dict[candidate] = state_dict.pop(ckpt_key)
+                    remap_needed = True
+
+            if remap_needed:
+                logger.warning(
+                    "Remapped checkpoint keys due to base model wrapping mismatch "
+                    "(likely unsloth version difference between checkpoint save and load)."
+                )
+
+            # Verify no remaining mismatches after remapping
+            leftover_unexpected = set()
+            current_keys = {name for name, _ in self.named_parameters()}
+            current_keys |= {name for name, _ in self.named_buffers()}
+            for ckpt_key in state_dict:
+                if ckpt_key not in current_keys:
+                    leftover_unexpected.add(ckpt_key)
+
+            if leftover_unexpected:
+                raise RuntimeError(
+                    f"Checkpoint keys not found in model after remapping. "
+                    f"Unexpected keys in checkpoint: {sorted(leftover_unexpected)[:20]}. "
+                    f"Model expects these keys to exist. Check unsloth/transformers version mismatch."
+                )
+
+        return super().load_state_dict(state_dict, strict=strict, assign=assign)
+
     def gradient_checkpointing_enable(self, **kwargs):
-        """Delegates gradient checkpointing enabling to the base model."""
-        self.model.gradient_checkpointing_enable(**kwargs)
+        """Enable gradient checkpointing on the language model only.
+
+        When the vision encoder is frozen (train_vision_encoder=False) its
+        forward already runs under torch.no_grad(), so checkpointing it would
+        just add overhead. We apply checkpointing only to the language model.
+        """
+        if hasattr(self.model, "language_model"):
+            self.model.language_model.gradient_checkpointing_enable(**kwargs)
+        else:
+            self.model.gradient_checkpointing_enable(**kwargs)
 
     def gradient_checkpointing_disable(self, **kwargs):
         """Delegates gradient checkpointing disabling to the base model."""
@@ -527,22 +631,18 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
             **kwargs,
         }
         with _timer("time/rbm_forward", timing_raw=timing_raw):
-            # Qwen3 models may need output_hidden_states=True and use hidden_states instead of last_hidden_state
-            is_qwen3 = "Qwen3" in self.base_model_id or (
-                hasattr(self.model, "config") and "Qwen3" in str(type(self.model))
-            )
-            if is_qwen3:
-                outputs = self.model(**model_kwargs, output_hidden_states=True, return_dict=True)
-                # Qwen3 uses hidden_states tuple, take the last layer
-                hidden_state = (
-                    outputs.hidden_states[-1] if hasattr(outputs, "hidden_states") else outputs.last_hidden_state
-                )
-            else:
-                outputs = self.model(**model_kwargs)
-                hidden_state = outputs.last_hidden_state  # [B, seq_len, hidden_dim]
+            outputs = self.model(**model_kwargs)
+            hidden_state = outputs.last_hidden_state  # [B, seq_len, hidden_dim]
 
         progress_logits = {"A": None, "B": None}
         success_logits = {"A": None, "B": None}
+
+        # Check for NaN in base model output early
+        if isinstance(hidden_state, torch.Tensor) and torch.isnan(hidden_state).any():
+            logger.warning(
+                f"[RBM Qwen forward] NaN in base model hidden_state! "
+                f"shape={hidden_state.shape}, nan_count={torch.isnan(hidden_state).sum().item()}"
+            )
 
         # Create output
         output = ModelOutput()
@@ -622,19 +722,8 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
             **kwargs,
         }
         with _timer("time/rbm_forward", timing_raw=timing_raw):
-            # Qwen3 models may need output_hidden_states=True and use hidden_states instead of last_hidden_state
-            is_qwen3 = "Qwen3" in self.base_model_id or (
-                hasattr(self.model, "config") and "Qwen3" in str(type(self.model))
-            )
-            if is_qwen3:
-                outputs = self.model(**model_kwargs, output_hidden_states=True, return_dict=True)
-                # Qwen3 uses hidden_states tuple, take the last layer
-                hidden_state = (
-                    outputs.hidden_states[-1] if hasattr(outputs, "hidden_states") else outputs.last_hidden_state
-                )
-            else:
-                outputs = self.model(**model_kwargs)
-                hidden_state = outputs.last_hidden_state  # [B, seq_len, hidden_dim]
+            outputs = self.model(**model_kwargs)
+            hidden_state = outputs.last_hidden_state  # [B, seq_len, hidden_dim]
 
         progress_logits = {"A": None, "B": None}
         success_logits = {"A": None, "B": None}

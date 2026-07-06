@@ -1,5 +1,7 @@
 import random
 
+import numpy as np
+
 from robometer.data.datasets.base import BaseDataset
 from robometer.data.samplers.pref import PrefSampler
 from robometer.data.samplers.progress import ProgressSampler
@@ -46,7 +48,12 @@ class RBMDataset(BaseDataset):
         Returns:
             Dictionary containing random state for all samplers
         """
+        np_state = np.random.get_state()
+        np_serializable = (np_state[0], np_state[1].tolist(), np_state[2], np_state[3], np_state[4])
+
         state = {
+            "global_random": random.getstate(),
+            "global_numpy": np_serializable,
             "pref_sampler": self.pref_sampler._local_random.getstate() if self.pref_sampler else None,
             "progress_sampler": self.progress_sampler._local_random.getstate() if self.progress_sampler else None,
         }
@@ -56,12 +63,30 @@ class RBMDataset(BaseDataset):
         """Restore random state from checkpoint.
 
         Args:
-            state: Dictionary containing random state for all samplers
+            state: Dictionary containing random state for dataset and all samplers
         """
+        def _fix_state(s):
+            """JSON serialization turns tuples into lists; random.setstate needs tuples."""
+            if s is None:
+                return None
+            version, seed_state, gauss = s
+            return (version, tuple(seed_state), gauss)
+
+        if "global_random" in state and state["global_random"] is not None:
+            fixed = _fix_state(state["global_random"])
+            if fixed is not None:
+                random.setstate(fixed)
+        if "global_numpy" in state and state["global_numpy"] is not None:
+            ns = state["global_numpy"]
+            np.random.set_state((ns[0], np.array(ns[1], dtype="uint32"), ns[2], ns[3], ns[4]))
         if state.get("pref_sampler") and self.pref_sampler:
-            self.pref_sampler._local_random.setstate(state["pref_sampler"])
+            fixed = _fix_state(state["pref_sampler"])
+            if fixed is not None:
+                self.pref_sampler._local_random.setstate(fixed)
         if state.get("progress_sampler") and self.progress_sampler:
-            self.progress_sampler._local_random.setstate(state["progress_sampler"])
+            fixed = _fix_state(state["progress_sampler"])
+            if fixed is not None:
+                self.progress_sampler._local_random.setstate(fixed)
 
     def get_resample_attempt_stats(self):
         return self._resample_attempt_stats

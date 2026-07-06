@@ -220,7 +220,7 @@ DATASET_MAP = {
             "jesbu1_auto_eval_rfm_auto_eval_rfm",
             "jesbu1_racer_rfm_racer_train",
             "jesbu1_roboarena_0825_rfm_roboarena",
-            "jesbu1_roboreward_rfm_roboreward_train"
+            "jesbu1_roboreward_rfm_roboreward_train",
             # "jesbu1_roboreward_rfm_roboreward_train",
         ],
         "eval": [

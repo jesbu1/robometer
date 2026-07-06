@@ -50,7 +50,7 @@ robometer/
 git clone https://github.com/aliang8/robometer.git
 cd robometer
 
-# Create venv and install
+# Create venv and install (robometer group is included by default)
 uv sync
 ```
 

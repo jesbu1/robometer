@@ -181,6 +181,9 @@ def update_cfg_with_pretrained_ckpt(
     if not resume_from_checkpoint:
         return
 
+    # Strip any surrounding quotes that Hydra may have left on the value
+    resume_from_checkpoint = resume_from_checkpoint.strip("'\"")
+
     hub_token = os.environ.get("HF_TOKEN")
     is_hub = "/" in resume_from_checkpoint and not resume_from_checkpoint.startswith(("/", "./", "../"))
     config_path: str | None = None
@@ -256,6 +259,9 @@ def resolve_checkpoint_path(checkpoint_path: str | None, hub_token: str | None =
     if not checkpoint_path:
         return None
 
+    # Strip any surrounding quotes that Hydra may have left on the value
+    checkpoint_path = checkpoint_path.strip("'\"")
+
     # If it's a local path, return as-is
     if checkpoint_path.startswith("/") or checkpoint_path.startswith("./") or checkpoint_path.startswith("../"):
         logger.info(f"Using local checkpoint: {checkpoint_path}")
@@ -297,6 +303,9 @@ def parse_hf_model_id_and_revision(hf_model_id: str, model_name: str = "model") 
         - repo_id: The repository ID without the @revision suffix
         - revision_to_load: The revision/tag to load, or None for latest
     """
+    # Strip any surrounding quotes that Hydra may have left on the value
+    hf_model_id = hf_model_id.strip("'\"")
+
     # Allow users to specify explicit revisions via repo@revision
     if "@" in hf_model_id:
         repo_id, explicit_revision = hf_model_id.split("@", 1)
@@ -528,7 +537,6 @@ class SaveBestCallback(TrainerCallback):
         For PEFT models, uses standard PeftModel.save_pretrained() to save adapter weights.
         Also saves custom heads (progress_head, etc.) which are part of the RBM wrapper.
 
-        Note: This should only be called from rank 0 in the current implementation.
         """
         _save_trainer_checkpoint_files(self._trainer, args, ckpt_dir, metrics=metrics, step=step)
 

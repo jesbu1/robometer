@@ -127,13 +127,13 @@ custom_eval:
   # during training 
   eval_types: ["policy_ranking", "confusion_matrix", "reward_alignment"]
   policy_ranking: 
-    - mw
+    - rbm-1m-ood
   confusion_matrix: 
-    - mw
+    - rbm-1m-ood
   reward_alignment: 
-    - mw
+    - rbm-1m-ood
   quality_preference:
-    - mw
+    - rbm-1m-ood
   comparisons_per_task: 5  # Limit number of quality preference comparisons per task. null = use all comparisons. Uniformly samples if limit is set.
   max_comparisons: null  # Limit total number of quality preference comparisons across all tasks. null = use all comparisons. Uniformly samples if limit is set.
   num_examples_per_quality_pr: 5  # Number of trajectories to sample per quality label for policy ranking evaluation. Only tasks with multiple quality labels are used.
@@ -148,6 +148,7 @@ custom_eval:
 # Training Configuration
 # =====================================================================================
 training:  
+  exp_name: "rbm" # name for wandb logging and checkpont saving
   # Output and logging
   output_dir: "./logs"
   overwrite_output_dir: false  # If true, overwrite output directory if it exists (works with accelerate/distributed training)
@@ -197,11 +198,17 @@ training:
   ddp_bucket_cap_mb: 25
 
   # Optimizer settings
+  optim: "adamw_8bit"  # Unsloth default; halves optimizer VRAM vs adamw_torch
   lr_scheduler_type: "cosine"
   warmup_steps: 0
   warmup_ratio: 0.1
   max_grad_norm: 10.0
   
+  # torch.compile (disabled by default; first few steps are slow due to kernel compilation,
+  # and compiled models may need special handling for checkpoint save/load)
+  torch_compile: false
+  torch_compile_backend: "inductor"
+
   # Vision encoder fine-tuning settings
   vision_encoder_lr: 1e-5  # Learning rate for last N vision encoder layers. If null, uses the same LR as other parameters.
   vision_encoder_num_layers: 3  # Number of last vision encoder layers to fine-tune with vision_encoder_lr. Only used if vision_encoder_lr is set.
@@ -216,8 +223,8 @@ loss:
   # Success loss weight and pos_weight are computed dynamically from class imbalance
   # to weight positive and negative classes equally (balanced accuracy)
   predict_last_frame_progress: false  # If true, only compute progress loss for the last frame
-  progress_loss_type: "discrete"  # Options: "l1", "l2", or "discrete" (default: "l2")
-  progress_discrete_bins: 10  # Number of discrete bins for progress when using discrete loss (default: 10)
+  progress_loss_type: "discrete"  # Options: "l1", "l2", or "discrete" (default: "discrete")
+  progress_discrete_bins: 10 # Number of discrete bins for progress when using discrete loss (default: 10)
 
 # =====================================================================================
 # Logging and Output Configuration

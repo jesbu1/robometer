@@ -44,7 +44,7 @@ uv run python robometer/evals/run_baseline_eval.py \
     model_config.num_prefix_samples=15
 
 # VlAC
-uv run --extra vlac --python .venv-vlac/bin/python robometer/evals/run_baseline_eval.py \
+uv run --group vlac --no-group robometer python robometer/evals/run_baseline_eval.py \
     reward_model=vlac \
     model_path=InternRobotics/VLAC \
     custom_eval.eval_types=[policy_ranking] \
