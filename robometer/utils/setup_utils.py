@@ -897,38 +897,13 @@ def setup_model_and_processor(
                     logger.info("Checkpoint has no PEFT adapter files - loading base + custom heads (PEFT will be added in train.py)")
                     _load_checkpoint_weights_from_safetensors(model, checkpoint_path, cfg, load_adapters=True)
             else:
-                # For non-PEFT models, we can use from_pretrained as before
-                # Capture before weights for verification
-                before_weights = {}
-                if "Qwen2.5" in cfg.base_model_id:
-                    before_weights = {
-                        "visual": model.model.visual.blocks[0].mlp.down_proj.weight,
-                        "progress_head": model.progress_head[0].weight,
-                        "lm_embed_tokens": model.model.language_model.embed_tokens.weight,
-                        "lm_layer": model.model.language_model.layers[0].mlp.up_proj.weight,
-                    }
-                elif "Qwen3" in cfg.base_model_id or "Molmo" in cfg.base_model_id:
-                    before_weights = {
-                        "visual": model.model.visual.blocks[0].mlp.linear_fc1.weight,
-                        "progress_head": model.progress_head[0].weight,
-                        "lm_embed_tokens": model.model.language_model.embed_tokens.weight,
-                        "lm_layer": model.model.language_model.layers[0].mlp.up_proj.weight,
-                    }
-
-                # Load the model from the evaluation path
-                model = model_cls.from_pretrained(
-                    repo_id,
-                    processor=processor,
-                    tokenizer=tokenizer,
-                    base_model=base_model,
-                    base_model_id=cfg.base_model_id,
-                    model_config=cfg,
-                    revision=revision_to_load,
-                )
-
-                # Verify weights were loaded
-                if before_weights:
-                    _verify_checkpoint_loading(cfg, model, before_weights)
+                # For non-PEFT models, load weights directly into the already-created
+                # model instead of via from_pretrained. from_pretrained re-creates the
+                # RBM wrapper and calls _initialize_weights, which corrupts Unsloth's
+                # internal state on the shared base_model, causing NaN forward passes.
+                logger.info("Loading checkpoint weights directly into existing model "
+                            "(skipping from_pretrained to avoid Unsloth corruption)")
+                _load_checkpoint_weights_from_safetensors(model, checkpoint_path, cfg, load_adapters=True)
 
     # elif "rewind_transformer" in cfg.base_model_id or "rewind_scale_transformer" in cfg.base_model_id:
     elif "rewind" in cfg.base_model_id:

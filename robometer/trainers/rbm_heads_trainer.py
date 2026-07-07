@@ -264,6 +264,23 @@ class RBMHeadsTrainer(Trainer):
 
         return optimizer
 
+    def _load_optimizer_and_scheduler(self, checkpoint):
+        if checkpoint is None or not os.path.isdir(checkpoint):
+            return
+        opt_path = os.path.join(checkpoint, "optimizer.pt")
+        sch_path = os.path.join(checkpoint, "scheduler.pt")
+        if os.path.isfile(opt_path) and hasattr(self, "optimizer") and self.optimizer is not None:
+            logger.info(f"Loading optimizer state from {opt_path}")
+            opt_state = torch.load(opt_path, map_location="cpu", weights_only=True)
+            self.optimizer.load_state_dict(opt_state)
+            logger.info("Optimizer state loaded successfully")
+        if os.path.isfile(sch_path) and hasattr(self, "lr_scheduler") and self.lr_scheduler is not None:
+            logger.info(f"Loading scheduler epoch from {sch_path}")
+            sch_state = torch.load(sch_path, map_location="cpu", weights_only=True)
+            target_epoch = sch_state["last_epoch"]
+            self._loaded_scheduler_epoch = target_epoch
+            logger.info(f"Scheduler epoch loaded, epoch={target_epoch}")
+
     def _post_checkpoint_load_reset(self):
         """
         Reset model and optimizer state after loading from checkpoint.
@@ -271,6 +288,29 @@ class RBMHeadsTrainer(Trainer):
         or computational graph state that causes crashes during training.
         """
         logger.info("Performing post-checkpoint load reset...")
+
+        # Ensure deterministic CUDA operations for reproducible training
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+        # Re-apply scheduler LR to optimizer param_groups.  Something between
+        # _prepare_for_training and the first training step (possibly the
+        # accelerator wrapper or 8-bit AdamW optimizer) resets param_group["lr"]
+        # and last_epoch, so we force the scheduler to the checkpoint epoch.
+        if (hasattr(self, "lr_scheduler") and self.lr_scheduler is not None
+                and hasattr(self, "optimizer") and self.optimizer is not None):
+            # Force scheduler to the epoch that was loaded from the checkpoint.
+            # scheduler.step(epoch) sets last_epoch=epoch and updates optimizer
+            # param_group lr values. The subsequent scheduler.step() in the
+            # training loop will advance from here.
+            target_epoch = getattr(self, "_loaded_scheduler_epoch", None)
+            if target_epoch is None:
+                target_epoch = self.lr_scheduler.last_epoch
+            self.lr_scheduler.step(target_epoch)
+            logger.info(
+                f"Reset scheduler to epoch {target_epoch}, "
+                f"lr={self.optimizer.param_groups[0]['lr']:.6e}"
+            )
 
         # Ensure model is in training mode
         self.model.train()
@@ -409,6 +449,18 @@ class RBMHeadsTrainer(Trainer):
         if not self._fsdp_diagnostics_logged:
             log_fsdp_diagnostics(model, accelerator=self.accelerator, logger=logger)
             self._fsdp_diagnostics_logged = True
+
+        # Seed CUDA RNG deterministically per step so dropout masks are identical
+        # on resume. compound_seed = base_seed + global_step * world_size + rank
+        # ensures the same dropout pattern for the same step number on the same
+        # rank, regardless of RNG history, while keeping masks different across ranks.
+        base_seed = getattr(self, "_cuda_base_seed", None)
+        if base_seed is None:
+            base_seed = getattr(self.config.data, "seed", 42)
+            self._cuda_base_seed = base_seed
+        world_size = dist.get_world_size() if dist.is_initialized() else 1
+        rank = dist.get_rank() if dist.is_initialized() else 0
+        torch.cuda.manual_seed(base_seed + self.state.global_step * world_size + rank)
 
         # Check if we just resumed from checkpoint (first step after resume)
         if hasattr(self, "_just_resumed_from_checkpoint") and self._just_resumed_from_checkpoint:
