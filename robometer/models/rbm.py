@@ -31,9 +31,6 @@ from robometer.utils.timer import _timer
 from robometer.utils.logger import get_logger
 
 logger = get_logger()
-from robometer.utils.logger import get_logger
-
-logger = get_logger()
 
 
 def squeeze_last_safe(x: torch.Tensor) -> torch.Tensor:
@@ -99,14 +96,11 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
         self.success_head = self.success_head.to(dtype=self.model_dtype)
 
         self.all_tied_weights_keys = {}
-
-        # Detect if base_model is wrapped (e.g. Qwen3_5ForCausalLM wrapping Qwen3_5Model)
-        # so load_state_dict can remap keys if the checkpoint was saved with a different
-        # wrapping (e.g. unsloth version mismatch).
+        # Detect wrapped base models so load_state_dict can remap keys when a
+        # checkpoint was saved with a different wrapper structure.
         self._base_model_has_inner_model = (
-            base_model is not None
-            and hasattr(base_model, "model")
-            and isinstance(base_model.model, torch.nn.Module)
+            hasattr(self.model, "model")
+            and isinstance(self.model.model, torch.nn.Module)
         )
 
         self.processor = processor
@@ -128,16 +122,41 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
         # Always create the attention pooling projection so checkpoints can be loaded across pooling modes.
         self.frame_pool_attn = nn.Linear(hidden_size, 1, bias=False).to(dtype=self.model_dtype)
 
+        # Validate that use_per_frame_progress_token requires use_multi_image
+        if self.use_per_frame_progress_token and not self.use_multi_image:
+            raise ValueError(
+                "use_per_frame_progress_token=True requires use_multi_image=True. "
+                "Per-frame progress tokens can only be used in multi-image mode."
+            )
+
+        # Molmo2 only supports multi-image mode, not video
+        if "Molmo" in self.base_model_id and not self.use_multi_image:
+            raise ValueError(
+                "Molmo2 does not support video mode (use_multi_image=False). "
+                "Please set data.use_multi_image=True to use Molmo2 with multi-image input."
+            )
+
+        # When the vision encoder is frozen, wrap its forward in torch.no_grad()
+        # so PyTorch doesn't store any activation graph through the vision tower.
+        if not self.model_config.train_vision_encoder and hasattr(self.model, "visual"):
+            original_visual_forward = self.model.visual.forward
+
+            @torch.no_grad()
+            def frozen_visual_forward(*args, **kwargs):
+                return original_visual_forward(*args, **kwargs)
+
+            self.model.visual.forward = frozen_visual_forward
+
     def load_state_dict(self, state_dict, strict=True, assign=False):
         """Override to remap keys when the base model wrapping differs from the checkpoint."""
-        # Check for size mismatches BEFORE loading — these silently skip weights
+        # Check for size mismatches BEFORE loading; these silently skip weights
         current = self.state_dict()
         for ckpt_key, ckpt_tensor in list(state_dict.items()):
             if ckpt_key in current and current[ckpt_key].shape != ckpt_tensor.shape:
                 logger.warning(
                     f"Size mismatch for '{ckpt_key}': "
                     f"checkpoint {list(ckpt_tensor.shape)} vs model {list(current[ckpt_key].shape)}. "
-                    f"This weight will NOT be loaded — the model retains its current values."
+                    f"This weight will NOT be loaded; the model retains its current values."
                 )
 
         if self._base_model_has_inner_model and hasattr(self, 'model'):
@@ -198,33 +217,6 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
                 )
 
         return super().load_state_dict(state_dict, strict=strict, assign=assign)
-
-    # Validate that use_per_frame_progress_token requires use_multi_image
-        if self.use_per_frame_progress_token and not self.use_multi_image:
-            raise ValueError(
-                "use_per_frame_progress_token=True requires use_multi_image=True. "
-                "Per-frame progress tokens can only be used in multi-image mode."
-            )
-
-        # Molmo2 only supports multi-image mode, not video
-        if "Molmo" in self.base_model_id and not self.use_multi_image:
-            raise ValueError(
-                "Molmo2 does not support video mode (use_multi_image=False). "
-                "Please set data.use_multi_image=True to use Molmo2 with multi-image input."
-            )
-
-        # When the vision encoder is frozen, wrap its forward in torch.no_grad()
-        # so PyTorch doesn't store any activation graph through the 24-layer ViT.
-        # The detached embeddings are scattered into inputs_embeds inside the base
-        # model forward; gradients still flow through the language model normally.
-        if not self.model_config.train_vision_encoder and hasattr(self.model, "visual"):
-            _orig_visual_forward = self.model.visual.forward
-
-            @torch.no_grad()
-            def _frozen_visual_forward(*args, **kwargs):
-                return _orig_visual_forward(*args, **kwargs)
-
-            self.model.visual.forward = _frozen_visual_forward
 
     def gradient_checkpointing_enable(self, **kwargs):
         """Enable gradient checkpointing on the language model only.
