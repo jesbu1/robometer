@@ -74,6 +74,18 @@ filters = {
 }
 
 
+def _safe_filename(name: str) -> str:
+    """Turn a trajectory id into a safe single filename component.
+
+    Some datasets (e.g. villekuosmanen/armnetbench) use ids that contain '/'
+    (e.g. "armnetbench/ring_insert/diffusion/.../front"). Interpolating those
+    directly into a filename produces nested paths whose parent directories do
+    not exist, so np.savez / torch.save raise FileNotFoundError for every
+    trajectory. Flattening the separators keeps the name unique and writable.
+    """
+    return name.replace("/", "_").replace(os.sep, "_")
+
+
 @dataclass
 class DataPreprocessConfig:
     """Configuration for data loading and processing."""
@@ -334,7 +346,7 @@ class DatasetPreprocessor:
         text_embedding = self._compute_text_embeddings(task_text)
 
         # Save embeddings
-        embeddings_filename = f"trajectory_{idx:06d}_{example_id}_embeddings.pt"
+        embeddings_filename = f"trajectory_{idx:06d}_{_safe_filename(example_id)}_embeddings.pt"
         embeddings_filepath = os.path.join(embeddings_dir, embeddings_filename)
         self._save_embeddings(video_embeddings, text_embedding, embeddings_filepath)
 
@@ -411,7 +423,7 @@ class DatasetPreprocessor:
                 return {"frames": None, "frames_processed": False}
 
             # Save frames as npz file
-            frames_filename = f"trajectory_{example['id']}.npz"
+            frames_filename = f"trajectory_{_safe_filename(example['id'])}.npz"
             frames_filepath = os.path.join(frames_dir, frames_filename)
 
             # Store file path and metadata in dataset (not the actual frames)
@@ -610,17 +622,24 @@ class DatasetPreprocessor:
                 vr = decord.VideoReader(frames_src, num_threads=1)
                 total_frames = len(vr)
 
-                # Sample frames efficiently
+                # Sample at most max_frames indices, linearly interpolated across the clip.
                 if total_frames <= self.config.max_frames_for_preprocessing:
                     frame_indices = list(range(total_frames))
                 else:
-                    # Uniform sampling
-                    frame_indices = [
-                        int(i * total_frames / self.config.max_frames_for_preprocessing)
-                        for i in range(self.config.max_frames_for_preprocessing)
-                    ]
+                    frame_indices = (
+                        np.linspace(0, total_frames - 1, self.config.max_frames_for_preprocessing)
+                        .astype(int)
+                        .tolist()
+                    )
 
-                frames_array = vr.get_batch(frame_indices).asnumpy()
+                # Read the sampled frames one at a time instead of vr.get_batch(frame_indices):
+                # get_batch decodes and buffers the entire span between the first and last
+                # requested index, so for long clips (e.g. the armnetbench videos at
+                # ~500-1000 frames) each worker holds hundreds of full-res frames at once.
+                # With num_threads workers running in parallel this exhausts RAM. Reading
+                # frames individually keeps peak memory bounded to max_frames per worker
+                # regardless of clip length.
+                frames_array = np.stack([vr[i].asnumpy() for i in frame_indices])
 
                 del vr
 
@@ -629,7 +648,7 @@ class DatasetPreprocessor:
                 return idx, None, None, None, None, None
 
             # Save frames as npz file
-            frames_filename = f"trajectory_{example['id']}.npz"
+            frames_filename = f"trajectory_{_safe_filename(example['id'])}.npz"
             frames_filepath = os.path.join(frames_dir, frames_filename)
             np.savez_compressed(
                 frames_filepath,
