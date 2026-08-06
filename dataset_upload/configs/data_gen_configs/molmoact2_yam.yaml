@@ -1,5 +1,5 @@
 dataset:
-  dataset_path: /data/molmoact2_data
+  dataset_path: ./datasets/molmoact2_yam_data
   dataset_name: molmoact2_yam
 
 output:
@@ -13,5 +13,5 @@ output:
   num_workers: 1
 
 hub:
-  push_to_hub: false
+  push_to_hub: true
   hub_repo_id: molmoact2_yam_rfm
