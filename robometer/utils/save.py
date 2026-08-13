@@ -138,9 +138,15 @@ def _save_trainer_checkpoint_files(
     if args.should_save:
         os.makedirs(args.output_dir, exist_ok=True)
         trainer.save_state()
-        trainer_state_src = os.path.join(args.output_dir, "trainer_state.json")
-        if os.path.exists(trainer_state_src):
-            shutil.copy(trainer_state_src, ckpt_dir)
+        trainer._save_optimizer_and_scheduler(args.output_dir)
+        try:
+            trainer._save_scaler(args.output_dir)
+        except Exception:
+            pass
+        for state_file in ("trainer_state.json", "optimizer.pt", "scheduler.pt", "scaler.pt"):
+            src = os.path.join(args.output_dir, state_file)
+            if os.path.exists(src):
+                shutil.copy(src, ckpt_dir)
 
     if metrics is not None:
         metrics_file = os.path.join(ckpt_dir, "metrics.json")
