@@ -677,6 +677,36 @@ def main(cfg: GenerateConfig):
             print(f"Dataset saved locally to: {dataset_path_local}")
         print("Dataset conversion complete!")
         return
+    elif "molmoact2" in cfg.dataset.dataset_name.lower():
+        # Bimanual YAM dataset from LeRobot cached parquet/video collection
+        from dataset_upload.dataset_loaders.molmoact2_yam_loader import (
+            convert_molmoact2_yam_dataset_to_hf,
+        )
+
+        print(f"Converting MolmoAct2 YAM dataset directly to HF from: {cfg.dataset.dataset_path}")
+        dataset = convert_molmoact2_yam_dataset_to_hf(
+            dataset_path=cfg.dataset.dataset_path,
+            dataset_name=cfg.dataset.dataset_name,
+            output_dir=cfg.output.output_dir,
+            max_trajectories=cfg.output.max_trajectories,
+            max_frames=cfg.output.max_frames,
+            fps=cfg.output.fps,
+        )
+
+        if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
+            try:
+                push_hf_dataset_and_video_files_to_hub(
+                    dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir
+                )
+            except Exception as e:
+                print(f"❌ Error pushing to hub: {e}")
+                print("Dataset was created locally but failed to push metadata to hub")
+        else:
+            dataset_path_local = os.path.join(cfg.output.output_dir, (cfg.dataset.dataset_name).lower())
+            dataset.save_to_disk(dataset_path_local)
+            print(f"Dataset saved locally to: {dataset_path_local}")
+        print("Dataset conversion complete!")
+        return
     elif "molmoact" in cfg.dataset.dataset_name.lower():
         # Stream + convert directly (LeRobot parquet)
         from dataset_upload.dataset_loaders.molmoact_loader import convert_molmoact_dataset_to_hf
@@ -689,6 +719,35 @@ def main(cfg: GenerateConfig):
             max_trajectories=cfg.output.max_trajectories,
             max_frames=cfg.output.max_frames,
             fps=cfg.output.fps,
+        )
+
+        if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
+            try:
+                push_hf_dataset_and_video_files_to_hub(
+                    dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir
+                )
+            except Exception as e:
+                print(f"❌ Error pushing to hub: {e}")
+                print("Dataset was created locally but failed to push metadata to hub")
+        else:
+            dataset_path_local = os.path.join(cfg.output.output_dir, (cfg.dataset.dataset_name).lower())
+            dataset.save_to_disk(dataset_path_local)
+            print(f"Dataset saved locally to: {dataset_path_local}")
+        print("Dataset conversion complete!")
+        return
+    elif "unitree_wbt" in cfg.dataset.dataset_name.lower() or "g1_wbt" in cfg.dataset.dataset_name.lower():
+        # Stream + convert directly (LeRobot dataset with stereo camera sampling)
+        from dataset_upload.dataset_loaders.unitree_wbt_loader import convert_unitree_wbt_dataset_to_hf
+
+        print(f"Converting UnitreeWBT dataset directly to HF from: {cfg.dataset.dataset_path}")
+        dataset = convert_unitree_wbt_dataset_to_hf(
+            dataset_path=cfg.dataset.dataset_path,
+            dataset_name=cfg.dataset.dataset_name,
+            output_dir=cfg.output.output_dir,
+            max_trajectories=cfg.output.max_trajectories,
+            max_frames=cfg.output.max_frames,
+            fps=cfg.output.fps,
+            num_workers=cfg.output.num_workers,
         )
 
         if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:

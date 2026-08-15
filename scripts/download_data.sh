@@ -137,11 +137,19 @@ repos=(
   jesbu1/utd_so101_clean_policy_ranking_wrist
   jesbu1/usc_koch_human_robot_paired
   jesbu1/usc_koch_p_ranking_rfm
-  #jesbu1/roboreward_rfm
+  jesbu1/roboreward_rfm
   jesbu1/roboreward_rfm_high_res
   jesbu1/rfm_new_mit_franka_rfm_nowrist
   ykorkmaz/usc_trossen_rfm
-  aliangdw/robofac_rbm
+  # rbm 1.1 data starts here
+  villekuosmanen/armnetbench_robometer_v01
+  ykorkmaz/molmoact2_so100_101_rbm
+  ykorkmaz/abc_subset_rbm
+  jesbu1/roboarena_02_03_2026
+  jesbu1/molmoact2_yam_rfm 
+  jesbu1/robofac_rbm 
+  myconnects/robocasa-rbm-v1.1 
+  jesbu1/motif_fixed_rfm jesbu1/unitree_wbt_rfm
 )
 
 # ------------------------------

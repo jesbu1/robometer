@@ -1,0 +1,39 @@
+train_datasets:
+  - "jesbu1/roboarena_02_03_2026"
+  - "jesbu1/unitree_wbt_rfm"
+  - "jesbu1/motif_fixed_rfm"
+  - "myconnects/robocasa-rbm-v1.1"
+  - "jesbu1/robofac_rbm"
+  - "jesbu1/molmoact2_yam_rfm"
+  - "villekuosmanen/armnetbench_robometer_v01"
+  - "ykorkmaz/molmoact2_so100_101_rbm"
+
+train_subsets:
+  - ["roboarena_02_03_2026"]
+  - ["g1_wbt_brainco_collect_plates_into_dishwasher", "g1_wbt_brainco_pickup_pillow", "g1_wbt_inspire_put_clothes_into_washing_machine", "g1_wbt_brainco_make_the_bed", "g1_wbt_inspire_put_clothes_into_basket"]
+  - ["motif_fixed_rfm"]
+  - ["robocasa_v1_1"]
+  - ["robofac"]
+  - ["molmoact2_yam"]
+  - ["so101", "bimanual_so101"]
+  - ["molmoact2_so100_101"]
+
+eval_datasets:
+  - "ykorkmaz/usc_trossen_rfm"
+
+eval_subsets:
+  - ["usc_trossen"]
+
+max_frames_for_preprocessing: 32
+video_frame_sampling: "uniform"
+num_proc: 1
+num_threads: 8
+force_reprocess: false
+cache_dir: /path/to/robometer/processed_datasets
+
+# Embedding preprocessing parameters
+precompute_embeddings: true
+embeddings_cache_dir: "embeddings"
+dinov2_model: "facebook/dinov2-base"
+sentence_model: "sentence-transformers/all-MiniLM-L12-v2"
+embedding_batch_size: 64
