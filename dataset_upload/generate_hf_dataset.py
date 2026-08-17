@@ -128,6 +128,8 @@ class OutputConfig:
     num_workers: int = field(
         default=-1, metadata={"help": "Number of parallel workers for processing (-1 for auto, 0 for sequential)"}
     )
+    target_width: Optional[int] = field(default=None, metadata={"help": "Output width for native Armnet tiled videos"})
+    target_height: Optional[int] = field(default=None, metadata={"help": "Output height for native Armnet tiled videos"})
 
 
 @dataclass
@@ -673,6 +675,30 @@ def main(cfg: GenerateConfig):
                 print("Dataset was created locally but failed to push metadata to hub")
         else:
             dataset_path_local = os.path.join(cfg.output.output_dir, (cfg.dataset.dataset_name).lower())
+            dataset.save_to_disk(dataset_path_local)
+            print(f"Dataset saved locally to: {dataset_path_local}")
+        print("Dataset conversion complete!")
+        return
+    elif "armnetbench_v01_tiled" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.armnet_lerobot_loader import convert_armnet_lerobot_to_hf
+
+        print(f"Converting native Armnet LeRobot dataset to tiled HF format from: {cfg.dataset.dataset_path}")
+        dataset = convert_armnet_lerobot_to_hf(
+            dataset_path=cfg.dataset.dataset_path,
+            dataset_name=cfg.dataset.dataset_name,
+            output_dir=cfg.output.output_dir,
+            max_trajectories=cfg.output.max_trajectories,
+            max_frames=cfg.output.max_frames,
+            fps=cfg.output.fps,
+            target_width=cfg.output.target_width,
+            target_height=cfg.output.target_height,
+        )
+        if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
+            push_hf_dataset_and_video_files_to_hub(
+                dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir
+            )
+        else:
+            dataset_path_local = os.path.join(cfg.output.output_dir, cfg.dataset.dataset_name.lower())
             dataset.save_to_disk(dataset_path_local)
             print(f"Dataset saved locally to: {dataset_path_local}")
         print("Dataset conversion complete!")

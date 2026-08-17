@@ -7,6 +7,7 @@ Contains utility functions for processing frames, saving images, and managing da
 import os
 import subprocess as sp
 import uuid
+from collections.abc import Mapping, Sequence
 
 import cv2
 import numpy as np
@@ -45,6 +46,72 @@ def downsample_frames(frames: np.ndarray | list, max_frames: int = 32) -> np.nda
         return [frames[i] for i in unique_indices]
     else:
         return frames[unique_indices]
+
+
+def tile_synchronized_views(
+    frames_by_view: Mapping[str, np.ndarray],
+    primary_view: str,
+    target_width: int,
+    target_height: int,
+    secondary_views: Sequence[str] | None = None,
+    primary_height_fraction: float = 2 / 3,
+    fill_value: int = 0,
+) -> np.ndarray:
+    """Tile synchronized RGB views with one large primary view and a lower grid.
+
+    Args:
+        frames_by_view: Mapping of view names to ``(T, H, W, 3)`` RGB arrays.
+        primary_view: View that occupies the full-width upper panel.
+        target_width: Output canvas width in pixels.
+        target_height: Output canvas height in pixels.
+        secondary_views: Ordered lower-panel views. Defaults to all other mapping keys.
+        primary_height_fraction: Fraction of the canvas height used by the primary view.
+        fill_value: Pixel value used for unused lower-grid cells.
+
+    Returns:
+        A ``(T, target_height, target_width, 3)`` uint8 RGB array.
+    """
+    if primary_view not in frames_by_view:
+        raise KeyError(f"Primary view {primary_view!r} not found in frames_by_view")
+    secondary = list(secondary_views or [key for key in frames_by_view if key != primary_view])
+    if not secondary:
+        raise ValueError("At least one secondary view is required")
+    if any(view not in frames_by_view for view in secondary):
+        missing = [view for view in secondary if view not in frames_by_view]
+        raise KeyError(f"Secondary views not found in frames_by_view: {missing}")
+    if not 0 < primary_height_fraction < 1:
+        raise ValueError("primary_height_fraction must be between 0 and 1")
+
+    views = [frames_by_view[primary_view], *(frames_by_view[view] for view in secondary)]
+    frame_count = min(len(view) for view in views)
+    if frame_count == 0:
+        raise ValueError("Cannot tile empty views")
+    if any(view.ndim != 4 or view.shape[-1] != 3 for view in views):
+        raise ValueError("All views must have shape (T, H, W, 3)")
+
+    primary_height = int(target_height * primary_height_fraction)
+    lower_height = target_height - primary_height
+    columns = max(1, int(np.ceil(np.sqrt(len(secondary)))))
+    rows = int(np.ceil(len(secondary) / columns))
+    cell_width = target_width // columns
+    cell_height = lower_height // rows
+    output = np.full(
+        (frame_count, target_height, target_width, 3), fill_value, dtype=np.uint8
+    )
+    for index in range(frame_count):
+        output[index, :primary_height] = cv2.resize(
+            views[0][index], (target_width, primary_height), interpolation=cv2.INTER_AREA
+        )
+        for panel_index, view in enumerate(views[1:]):
+            row, column = divmod(panel_index, columns)
+            x_start = column * cell_width
+            x_end = target_width if column == columns - 1 else (column + 1) * cell_width
+            y_start = primary_height + row * cell_height
+            y_end = target_height if row == rows - 1 else primary_height + (row + 1) * cell_height
+            output[index, y_start:y_end, x_start:x_end] = cv2.resize(
+                view[index], (x_end - x_start, y_end - y_start), interpolation=cv2.INTER_AREA
+            )
+    return output
 
 
 def motion_aware_downsample(frames: np.ndarray, max_frames: int = 32) -> np.ndarray:

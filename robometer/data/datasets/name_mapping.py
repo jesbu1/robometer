@@ -93,4 +93,6 @@ DS_SHORT_NAME_MAPPING = {
     "abraranwar_usc_koch_rewind_rfm_usc_koch_rewind": "usc_koch_rewind",
     # RoboFAC
     "aliangdw_robofac_rbm_robofac": "robofac",
+    "jesbu1_armnetbench_v01_tiled_so101_armnetbench_v01_tiled_so101": "armnetbench_tiled_so101",
+    "jesbu1_armnetbench_v01_tiled_bimanual_so101_armnetbench_v01_tiled_bimanual_so101": "armnetbench_tiled_bimanual_so101",
 }

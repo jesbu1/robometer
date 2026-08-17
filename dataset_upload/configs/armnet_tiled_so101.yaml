@@ -1,0 +1,15 @@
+dataset:
+  dataset_path: /gpfs/scrubbed/jessezha/armnet_native_so101
+  dataset_name: armnetbench_v01_tiled_so101
+output:
+  output_dir: /gpfs/scrubbed/jessezha/armnet_tiled_so101
+  max_trajectories: -1
+  max_frames: 64
+  use_video: true
+  fps: 20
+  target_width: 640
+  target_height: 540
+  num_workers: 0
+hub:
+  push_to_hub: true
+  hub_repo_id: armnetbench_v01_tiled_so101

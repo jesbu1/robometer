@@ -85,5 +85,6 @@ robocasa_mimicgen_robot0_agentview_left,1.0
 robocasa_mimicgen_robot0_agentview_right,1.0
 robocasa_mimicgen_robot0_eye_in_hand,1.0
 armnetbench,0.95
+armnetbench_tiled,0.95
 abc_130k,0.95
 molmoact2_so100_101,0.94

@@ -423,6 +423,16 @@ DATASET_MAP = {
             "ykorkmaz_molmoact2_so100_101_rbm_molmoact2_so100_101",
         ],
     },
+    "rbm-1.1-tiled-armnet": {
+        "train": [
+            "jesbu1_armnetbench_v01_tiled_so101_armnetbench_v01_tiled_so101",
+            "jesbu1_armnetbench_v01_tiled_bimanual_so101_armnetbench_v01_tiled_bimanual_so101",
+        ],
+        "eval": [
+            "jesbu1_armnetbench_v01_tiled_so101_armnetbench_v01_tiled_so101",
+            "jesbu1_armnetbench_v01_tiled_bimanual_so101_armnetbench_v01_tiled_bimanual_so101",
+        ],
+    },
     "rbm-1m-ood": {
         "eval": [
             # "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",  # putting this here for now
@@ -506,6 +516,7 @@ DATA_SOURCE_CATEGORY = {
         "racer_val",
         "roboarena_eval_debug_nowrist",
         "armnetbench",
+        "armnetbench_tiled",
     ],
     "franka": [
         "oxe_droid",
