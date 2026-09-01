@@ -5,6 +5,13 @@ Client script for the RBM eval server. No robometer dependency.
 Sends a video (or .npy/.npz frames) and task instruction to a running eval server,
 then saves per-frame progress and success predictions plus an optional plot.
 
+Supports two input styles so a tiled checkpoint can serve both:
+  --video top_tiled.mp4                         already-tiled video (one image stream)
+  --view top=raw_top.mp4 --view left=raw_left.mp4 --view right=raw_right.mp4
+                                                raw multi-view inputs; the server
+                                                dynamically tiles them with the same
+                                                layout used by the tiled training data
+
 Example:
   # Start the server first (in another terminal):
   #   uv run python robometer/evals/eval_server.py --config_path=robometer/configs/config.yaml --host=0.0.0.0 --port=8000
@@ -257,7 +264,8 @@ def build_multipart_payload(samples: List[Dict[str, Any]]) -> Tuple[Dict[str, An
       - data: mapping for requests.post(data=...) with sample_{i} JSON strings
 
     Numpy arrays inside trajectory fields are moved to .npy blobs and replaced by
-    {"__numpy_file__": <file_key>} references.
+    {"__numpy_file__": <file_key>} references. A `views` dict (multi-view frames
+    for dynamic tiling on the server) maps view names to .npy blob references.
     """
     files: Dict[str, Any] = {}
     data: Dict[str, str] = {}
@@ -265,9 +273,22 @@ def build_multipart_payload(samples: List[Dict[str, Any]]) -> Tuple[Dict[str, An
     numpy_fields = ["frames", "lang_vector", "video_embeddings"]
 
     for i, sample in enumerate(samples):
-        sample_copy = json.loads(json.dumps(sample, default=str))  # make JSON-serializable shell
+        # Extract view arrays first so the JSON shell never carries raw arrays
         traj = sample.get("trajectory", {})
+        views = traj.get("views") if isinstance(traj, dict) else None
+        view_refs: Dict[str, str] = {}
+        if isinstance(views, dict):
+            for view_name, arr in views.items():
+                if isinstance(arr, np.ndarray):
+                    file_key = f"sample_{i}_trajectory_views_{view_name}"
+                    files[file_key] = _numpy_to_npy_file_tuple(arr, f"{file_key}.npy")
+                    view_refs[view_name] = file_key
+
+        sample_copy = json.loads(json.dumps(sample, default=str))  # make JSON-serializable shell
         traj_copy = sample_copy.get("trajectory", {})
+
+        if view_refs:
+            traj_copy["views"] = {name: {"__numpy_file__": key} for name, key in view_refs.items()}
 
         for field in numpy_fields:
             val = traj.get(field, None)
@@ -338,33 +359,69 @@ def extract_rewards_from_server_output(outputs: Dict[str, Any]) -> Tuple[np.ndar
 
 
 def make_progress_sample(
-    frames: np.ndarray,
+    frames: Optional[np.ndarray],
     task: str,
     sample_id: str,
     subsequence_length: int,
+    views: Optional[Dict[str, np.ndarray]] = None,
+    primary_view: Optional[str] = None,
+    secondary_views: Optional[List[str]] = None,
+    target_width: Optional[int] = None,
+    target_height: Optional[int] = None,
+    primary_height_fraction: Optional[float] = None,
 ) -> Dict[str, Any]:
+    """Build a progress sample from either pre-tiled ``frames`` or raw ``views``.
+
+    When ``views`` is provided, the server dynamically tiles the views into one
+    frame per timestep using the same layout as the tiled training datasets
+    (primary panel on top, secondary views in a lower grid).
+    """
+    trajectory: Dict[str, Any] = {
+        "frames": frames,
+        "task": task,
+        "id": sample_id,
+        "metadata": {"subsequence_length": int(subsequence_length)},
+        "video_embeddings": None,
+    }
+    if frames is not None:
+        trajectory["frames_shape"] = tuple(frames.shape)
+    if views:
+        trajectory["views"] = views
+        if primary_view:
+            trajectory["primary_view"] = primary_view
+        if secondary_views:
+            trajectory["secondary_views"] = secondary_views
+        if target_width:
+            trajectory["target_width"] = int(target_width)
+        if target_height:
+            trajectory["target_height"] = int(target_height)
+        if primary_height_fraction:
+            trajectory["primary_height_fraction"] = float(primary_height_fraction)
     return {
         "sample_type": "progress",
-        "trajectory": {
-            "frames": frames,
-            "frames_shape": tuple(frames.shape),
-            "task": task,
-            "id": sample_id,
-            "metadata": {"subsequence_length": int(subsequence_length)},
-            "video_embeddings": None,
-        },
+        "trajectory": trajectory,
     }
 
 
 def compute_rewards_per_frame(
     eval_server_url: str,
-    video_frames: np.ndarray,
+    video_frames: Optional[np.ndarray],
     task: str,
     timeout_s: float = 120.0,
     use_frame_steps: bool = False,
+    views: Optional[Dict[str, np.ndarray]] = None,
+    primary_view: Optional[str] = None,
+    secondary_views: Optional[List[str]] = None,
+    target_width: Optional[int] = None,
+    target_height: Optional[int] = None,
+    primary_height_fraction: Optional[float] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Send the full trajectory to the eval server and get per-frame progress and success.
+    Send a trajectory to the eval server and get per-frame progress and success.
+
+    Pass either ``video_frames`` (T,H,W,C — e.g. an already-tiled video) or
+    ``views`` (mapping of view name to (T,H,W,C) arrays); with views the server
+    tiles them dynamically before inference.
 
     Args:
         use_frame_steps: If True, server expands into frame-step sub-samples (0:1, 0:2, ...)
@@ -375,12 +432,23 @@ def compute_rewards_per_frame(
         progress: Per-frame progress (reward) predictions.
         success_probs: Per-frame success probabilities (empty if model has no success head).
     """
-    T = int(video_frames.shape[0])
+    if views:
+        T = min(int(v.shape[0]) for v in views.values())
+    else:
+        if video_frames is None:
+            raise ValueError("Provide either video_frames or views")
+        T = int(video_frames.shape[0])
     sample = make_progress_sample(
-        frames=video_frames,
+        frames=video_frames if not views else None,
         task=task,
         sample_id="0",
         subsequence_length=T,
+        views=views,
+        primary_view=primary_view,
+        secondary_views=secondary_views,
+        target_width=target_width,
+        target_height=target_height,
+        primary_height_fraction=primary_height_fraction,
     )
     outputs = post_evaluate_batch_npy(
         eval_server_url, [sample], timeout_s=timeout_s, use_frame_steps=use_frame_steps
@@ -403,9 +471,32 @@ def main() -> None:
     parser.add_argument(
         "--video",
         type=str,
-        required=True,
-        help="Path or URL to a video, or a .npy/.npz file with frames (T,H,W,C) or (T,C,H,W)",
+        default=None,
+        help="Path or URL to an (already tiled) video, or a .npy/.npz file with frames (T,H,W,C)",
     )
+    parser.add_argument(
+        "--view",
+        type=str,
+        action="append",
+        default=None,
+        metavar="NAME=PATH",
+        help="Raw per-camera view for dynamic tiling on the server; repeat for each view, "
+        "e.g. --view top=camera_top.mp4 --view left=camera_left.mp4 --view right=camera_right.mp4",
+    )
+    parser.add_argument(
+        "--primary-view",
+        type=str,
+        default=None,
+        help="View name occupying the upper primary panel (default: first --view)",
+    )
+    parser.add_argument(
+        "--secondary-views",
+        type=str,
+        default=None,
+        help="Comma-separated ordered view names for the lower grid (default: remaining views)",
+    )
+    parser.add_argument("--target-width", type=int, default=None, help="Tiled canvas width (default: inferred)")
+    parser.add_argument("--target-height", type=int, default=None, help="Tiled canvas height (default: inferred)")
     parser.add_argument("--task", type=str, required=True, help="Task instruction describing the trajectory")
     parser.add_argument(
         "--fps",
@@ -433,10 +524,29 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    video_path = Path(args.video)
+    if not args.video and not args.view:
+        parser.error("provide either --video or at least one --view")
+
+    frames: Optional[np.ndarray] = None
+    views: Optional[Dict[str, np.ndarray]] = None
+    label = args.video or ",".join(args.view)
+    if args.view:
+        views = {}
+        for spec in args.view:
+            name, _, path = spec.partition("=")
+            if not name or not path:
+                raise SystemExit(f"invalid --view {spec!r}; expected NAME=PATH")
+            views[name] = load_frames_input(path, fps=float(args.fps))
+        min_len = min(v.shape[0] for v in views.values())
+        views = {name: v[:min_len] for name, v in views.items()}
+        print(f"Loaded {len(views)} views: {', '.join(views)} ({min_len} synchronized frames each)")
+        video_path = Path(next(s.split("=", 1)[1] for s in args.view))
+    else:
+        video_path = Path(args.video)
+        frames = load_frames_input(str(args.video), fps=float(args.fps))
     out_path = Path(args.out) if args.out is not None else video_path.with_name(video_path.stem + "_rewards.npy")
 
-    frames = load_frames_input(str(args.video), fps=float(args.fps))
+    secondary_views = [v.strip() for v in args.secondary_views.split(",")] if args.secondary_views else None
 
     rewards, success_probs = compute_rewards_per_frame(
         eval_server_url=args.eval_server_url,
@@ -444,6 +554,11 @@ def main() -> None:
         task=args.task,
         timeout_s=float(args.timeout_s),
         use_frame_steps=args.use_frame_steps,
+        views=views,
+        primary_view=args.primary_view,
+        secondary_views=secondary_views,
+        target_width=args.target_width,
+        target_height=args.target_height,
     )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)

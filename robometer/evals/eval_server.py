@@ -51,6 +51,7 @@ from robometer.utils.save import load_model_from_hf
 from robometer.configs.eval_configs import EvalServerConfig
 from robometer.configs.experiment_configs import ExperimentConfig
 from robometer.data.dataset_types import PreferenceSample, ProgressSample
+from robometer.utils.tiling import apply_dynamic_tiling_to_trajectory
 from robometer.utils.setup_utils import setup_model_and_processor, setup_batch_collator
 from robometer.models.utils import ModelOutput, convert_bins_to_continuous, convert_bins_to_continuous_hard
 from robometer.utils.config_utils import display_config, convert_hydra_to_dataclass
@@ -199,6 +200,16 @@ def process_batch_helper(
             input_samples.append(sample)
         elif isinstance(sample, dict):
             sample_type = sample.get("sample_type")
+            # Dynamic tiling: a trajectory may carry raw multi-view frames under
+            # `views` instead of pre-tiled `frames`; tile them into one frame per
+            # timestep so a tiled checkpoint can serve both input styles.
+            for trajectory_key in ("trajectory", "chosen_trajectory", "rejected_trajectory"):
+                trajectory = sample.get(trajectory_key)
+                if isinstance(trajectory, dict):
+                    try:
+                        apply_dynamic_tiling_to_trajectory(trajectory)
+                    except (KeyError, ValueError) as e:
+                        raise ValueError(f"Dynamic tiling failed for {trajectory_key}: {e}") from e
             if sample_type == "preference":
                 input_samples.append(PreferenceSample(**sample))
             elif sample_type == "progress":

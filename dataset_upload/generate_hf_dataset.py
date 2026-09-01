@@ -703,6 +703,39 @@ def main(cfg: GenerateConfig):
             print(f"Dataset saved locally to: {dataset_path_local}")
         print("Dataset conversion complete!")
         return
+    elif "molmoact2_yam_tiled" in cfg.dataset.dataset_name.lower():
+        # Bimanual YAM dataset converted to tiled (top/left/right) trajectories
+        from dataset_upload.dataset_loaders.molmoact2_yam_loader import (
+            convert_molmoact2_yam_tiled_to_hf,
+        )
+
+        print(f"Converting MolmoAct2 YAM dataset to tiled HF format from: {cfg.dataset.dataset_path}")
+        dataset = convert_molmoact2_yam_tiled_to_hf(
+            dataset_path=cfg.dataset.dataset_path,
+            dataset_name=cfg.dataset.dataset_name,
+            output_dir=cfg.output.output_dir,
+            max_trajectories=cfg.output.max_trajectories,
+            max_frames=cfg.output.max_frames,
+            fps=cfg.output.fps,
+            target_width=cfg.output.target_width or 640,
+            target_height=cfg.output.target_height or 540,
+            num_workers=cfg.output.num_workers if cfg.output.num_workers and cfg.output.num_workers > 0 else 12,
+        )
+
+        if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
+            try:
+                push_hf_dataset_and_video_files_to_hub(
+                    dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir
+                )
+            except Exception as e:
+                print(f"❌ Error pushing to hub: {e}")
+                print("Dataset was created locally but failed to push metadata to hub")
+        else:
+            dataset_path_local = os.path.join(cfg.output.output_dir, (cfg.dataset.dataset_name).lower())
+            dataset.save_to_disk(dataset_path_local)
+            print(f"Dataset saved locally to: {dataset_path_local}")
+        print("Dataset conversion complete!")
+        return
     elif "molmoact2" in cfg.dataset.dataset_name.lower():
         # Bimanual YAM dataset from LeRobot cached parquet/video collection
         from dataset_upload.dataset_loaders.molmoact2_yam_loader import (

@@ -27,6 +27,7 @@ from robometer.evals.eval_server import compute_batch_outputs
 from robometer.evals.eval_viz_utils import create_combined_progress_success_plot, extract_frames
 from robometer.utils.save import load_model_from_hf
 from robometer.utils.setup_utils import setup_batch_collator
+from robometer.utils.tiling import tile_synchronized_views
 
 
 def load_frames_input(
@@ -136,7 +137,24 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--model-path", required=True, help="HuggingFace model id or local checkpoint path")
-    parser.add_argument("--video", required=True, help="Video path/URL or .npy/.npz with frames (T,H,W,C)")
+    parser.add_argument("--video", default=None, help="Video path/URL or .npy/.npz with frames (T,H,W,C)")
+    parser.add_argument(
+        "--view",
+        type=str,
+        action="append",
+        default=None,
+        metavar="NAME=PATH",
+        help="Raw per-camera view; repeated per view. Views are tiled locally with the same "
+        "layout as the tiled training datasets, e.g. --view top=a.mp4 --view left=b.mp4 --view right=c.mp4",
+    )
+    parser.add_argument(
+        "--primary-view", default=None, help="View name for the upper primary panel (default: first --view)"
+    )
+    parser.add_argument(
+        "--secondary-views", default=None, help="Comma-separated ordered view names for the lower grid"
+    )
+    parser.add_argument("--target-width", type=int, default=640, help="Tiled canvas width (default: 640)")
+    parser.add_argument("--target-height", type=int, default=540, help="Tiled canvas height (default: 540)")
     parser.add_argument("--task", required=True, help="Task instruction for the trajectory")
     parser.add_argument("--fps", type=float, default=1.0, help="FPS when sampling from video (default: 1.0)")
     parser.add_argument("--max-frames", type=int, default=512, help="Max frames to extract from video (default: 512)")
@@ -149,14 +167,38 @@ def main() -> None:
     parser.add_argument("--out", default=None, help="Output path for rewards .npy (default: <video_stem>_rewards.npy)")
     args = parser.parse_args()
 
-    video_path = Path(args.video)
-    out_path = Path(args.out) if args.out is not None else video_path.with_name(video_path.stem + "_rewards.npy")
+    if not args.video and not args.view:
+        parser.error("provide either --video or at least one --view")
 
-    frames = load_frames_input(
-        str(args.video),
-        fps=float(args.fps),
-        max_frames=int(args.max_frames),
-    )
+    if args.video:
+        video_path = Path(args.video)
+        frames = load_frames_input(
+            str(args.video),
+            fps=float(args.fps),
+            max_frames=int(args.max_frames),
+        )
+    else:
+        views: Dict[str, np.ndarray] = {}
+        for spec in args.view:
+            name, _, path = spec.partition("=")
+            if not name or not path:
+                raise SystemExit(f"invalid --view {spec!r}; expected NAME=PATH")
+            views[name] = load_frames_input(path, fps=float(args.fps), max_frames=int(args.max_frames))
+        min_len = min(v.shape[0] for v in views.values())
+        views = {name: v[:min_len] for name, v in views.items()}
+        print(f"Loaded {len(views)} views: {', '.join(views)} ({min_len} synchronized frames each)")
+        secondary_views = [v.strip() for v in args.secondary_views.split(",")] if args.secondary_views else None
+        frames = tile_synchronized_views(
+            views,
+            primary_view=args.primary_view or next(iter(views)),
+            target_width=int(args.target_width),
+            target_height=int(args.target_height),
+            secondary_views=secondary_views,
+        )
+        label = "_".join(views) + "_tiled"
+        video_path = Path(label)
+
+    out_path = Path(args.out) if args.out is not None else video_path.with_name(video_path.stem + "_rewards.npy")
 
     rewards, success_probs = compute_rewards_per_frame_local(
         model_path=args.model_path,

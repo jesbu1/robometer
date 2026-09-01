@@ -433,6 +433,14 @@ DATASET_MAP = {
             "jesbu1_armnetbench_v01_tiled_bimanual_so101_armnetbench_v01_tiled_bimanual_so101",
         ],
     },
+    "rbm-1.1-tiled-molmoact2": {
+        "train": [
+            "jesbu1_molmoact2_yam_tiled_rfm_molmoact2_yam_tiled",
+        ],
+        "eval": [
+            "jesbu1_molmoact2_yam_tiled_rfm_molmoact2_yam_tiled",
+        ],
+    },
     "rbm-1m-ood": {
         "eval": [
             # "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",  # putting this here for now

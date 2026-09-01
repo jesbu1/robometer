@@ -10,3 +10,5 @@ ulimit -n 65535
 hf download robometer/processed_datasets --repo-type dataset --local-dir=${ROBOMETER_PROCESSED_DATASETS_PATH:-$RBM_PROCESSED_DATASETS_PATH}
 # download rbm1.1 processed datasets
 hf download jesbu1/processed_datasets_rbm1.1 --repo-type dataset --local-dir=${ROBOMETER_PROCESSED_DATASETS_PATH:-$RBM_PROCESSED_DATASETS_PATH}
+# download rbm1.1 tiled processed datasets (loose files; no untar needed)
+hf download jesbu1/processed_dataset_rbm1.1_tiled --repo-type dataset --local-dir=${ROBOMETER_PROCESSED_DATASETS_PATH:-$RBM_PROCESSED_DATASETS_PATH}

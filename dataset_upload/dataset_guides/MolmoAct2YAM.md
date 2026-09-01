@@ -124,6 +124,22 @@ uv run python dataset_upload/generate_hf_dataset.py \
     --config_path=dataset_upload/configs/data_gen_configs/molmoact2_yam.yaml
 ```
 
+### Convert (tiled)
+
+Produces one trajectory per episode with all three views composited into a
+single `640 x 540` frame — `top` in the primary upper panel, `left` and
+`right` in the lower grid (see `dataset_upload/TILING.md`):
+
+```bash
+uv run python dataset_upload/generate_hf_dataset.py \
+    --config_path=dataset_upload/configs/data_gen_configs/molmoact2_yam_tiled.yaml
+```
+
+Output videos keep the untiled sampling conventions (32 frames at 10 fps) so
+both variants stay comparable; only the image content differs. Tiled model
+training/eval also works on raw multi-view inputs at inference time — the eval
+server tiles views on the fly (see `dataset_upload/TILING.md`).
+
 ## Data Fields
 
 Each trajectory includes:
@@ -132,11 +148,13 @@ Each trajectory includes:
 - `frames`: Relative path to the generated H.264 video clip
 - `is_robot`: True
 - `quality_label`: "successful"
-- `data_source`: `molmoact2_yam`
+- `data_source`: `molmoact2_yam` (or `molmoact2_yam_tiled` for the tiled variant)
 
 ## Notes
 
-- Videos are originally AV1-encoded; the converter decodes and re-encodes to H.264 via ffmpeg.
-- Only the `top` camera view is extracted per episode (produces one trajectory per episode).
+- Videos are originally AV1-encoded (all-keyframe); the converter decodes and re-encodes to H.264 via ffmpeg.
+- Untiled converter: only the `top` camera view is extracted per episode (produces one trajectory per episode).
+- Tiled converter: all three views are decoded per episode (each camera has its own video pointer/timestamps) and composited per frame.
 - Frames are extracted on-demand via ffmpeg piping for memory efficiency.
 - 32,246 total episodes across 34 unique tasks.
+- Training dataset category: `rbm-1.1-tiled-molmoact2`; preprocessed name: `jesbu1_molmoact2_yam_tiled_rfm_molmoact2_yam_tiled` (short name `molmoact2_yam_tiled`, success cutoff 0.94).

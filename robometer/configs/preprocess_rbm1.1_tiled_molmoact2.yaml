@@ -1,0 +1,19 @@
+train_datasets:
+  - "jesbu1/molmoact2_yam_tiled_rfm"
+train_subsets:
+  - ["molmoact2_yam_tiled"]
+eval_datasets:
+  - "jesbu1/molmoact2_yam_tiled_rfm"
+eval_subsets:
+  - ["molmoact2_yam_tiled"]
+max_frames_for_preprocessing: 32
+video_frame_sampling: "uniform"
+num_proc: 1
+num_threads: 12
+force_reprocess: false
+cache_dir: ./processed_datasets
+precompute_embeddings: false
+embeddings_cache_dir: "embeddings"
+dinov2_model: "facebook/dinov2-base"
+sentence_model: "sentence-transformers/all-MiniLM-L12-v2"
+embedding_batch_size: 64

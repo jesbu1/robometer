@@ -91,18 +91,69 @@ suboptimal
 training code treats both as non-successful trajectories for progress masking,
 success labels, and preference sampling.
 
+## MolmoAct2 YAM
+
+The bimanual YAM dataset is tiled with the same utility by:
+
+```text
+dataset_upload/dataset_loaders/molmoact2_yam_loader.py:convert_molmoact2_yam_tiled_to_hf
+```
+
+Layout: `top` is the primary panel, `left` and `right` share the lower grid.
+Each camera has independent LeRobot video pointers and timestamps, so views are
+synchronized per camera by decoding each camera's own segment. The conversion
+config is:
+
+```text
+dataset_upload/configs/data_gen_configs/molmoact2_yam_tiled.yaml
+```
+
+Output is `640 x 540`, 32 frames at 10 fps per trajectory, matching the
+untiled `molmoact2_yam_rfm` sampling conventions. All episodes carry the
+native `successful` label.
+
+## Dynamic Tiling at Inference
+
+The tiled checkpoints can be hosted and served with either input style:
+
+```text
+1. Pre-tiled videos    — a single image stream, sent as `frames`.
+2. Raw multi-view data — a `views` mapping of view name to (T, H, W, 3) arrays.
+```
+
+For raw multi-view inputs, the eval server tiles the views on the fly with
+`robometer/utils/tiling.py:apply_dynamic_tiling_to_trajectory` using the same
+layout as the tiled training data (`primary_view` upper panel, ordered
+`secondary_views` in the lower grid, canvas size inferred from the primary
+view's aspect when not given). The client never needs the robometer package:
+
+```bash
+python scripts/example_inference.py \
+  --eval-server-url http://localhost:8000 \
+  --view top=camera_top.mp4 --view left=camera_left.mp4 --view right=camera_right.mp4 \
+  --primary-view top \
+  --task "Move the blocks to spell AI2"
+```
+
+`scripts/example_inference_local.py` supports the same `--view` flags and
+tiles locally before inference. Raw multi-view dicts with a `views` key are
+also accepted by `robometer/evals/eval_utils.py:raw_dict_to_sample` for
+rollout-style wrappers.
+
 ## Preprocessing and Training
 
-The tiled preprocessing config is:
+The tiled preprocessing configs are:
 
 ```text
 robometer/configs/preprocess_rbm1.1_tiled_armnet.yaml
+robometer/configs/preprocess_rbm1.1_tiled_molmoact2.yaml
 ```
 
-The tiled fine-tuning launcher explicitly sets the tiled image resolution:
+The tiled fine-tuning launchers explicitly set the tiled image resolution:
 
 ```text
 run_scripts/finetune_armnet_tiled_qwen3_fft.sbatch
+run_scripts/finetune_molmoact2_tiled_qwen3_fft.sbatch
 ```
 
 The resolution is not a global default. Other dataset converters and training
@@ -115,6 +166,7 @@ Datasets:
 
 - `jesbu1/armnetbench_v01_tiled_so101`
 - `jesbu1/armnetbench_v01_tiled_bimanual_so101`
+- `jesbu1/molmoact2_yam_tiled_rfm`
 
 Model:
 

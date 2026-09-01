@@ -143,6 +143,10 @@ repos=(
   ykorkmaz/usc_trossen_rfm
   # rbm 1.1 data starts here
   villekuosmanen/armnetbench_robometer_v01
+  # tiled datasets
+  jesbu1/molmoact2_yam_tiled_rfm
+  jesbu1/armnetbench_v01_tiled_so101
+  jesbu1/armnetbench_v01_tiled_bimanual_so101
   ykorkmaz/molmoact2_so100_101_rbm
   ykorkmaz/abc_subset_rbm
   jesbu1/roboarena_02_03_2026

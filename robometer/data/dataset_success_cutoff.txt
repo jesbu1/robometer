@@ -88,3 +88,4 @@ armnetbench,0.95
 armnetbench_tiled,0.95
 abc_130k,0.95
 molmoact2_so100_101,0.94
+molmoact2_yam_tiled,0.94

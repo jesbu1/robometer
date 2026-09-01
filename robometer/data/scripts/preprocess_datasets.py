@@ -72,6 +72,7 @@ filters = {
     "anqil/rh20t_subset_rfm/rh20t_human": lambda x: x["frames_shape"][0] < 16,  # some episodes are too short
     "anqil/rh20t_subset_rfm/rh20t_robot": lambda x: x["frames_shape"][0] < 16,  # some episodes are too short
     "jesbu1/molmoact2_yam_rfm/molmoact2_yam_rfm": lambda x: "barcode" in x["task"].lower(),
+    "jesbu1/molmoact2_yam_tiled_rfm/molmoact2_yam_tiled": lambda x: "barcode" in x["task"].lower(),
 }
 
 

@@ -17,6 +17,7 @@ import torch
 
 from robometer.data.dataset_types import PreferenceSample, ProgressSample, Trajectory
 from robometer.data.datasets.helpers import linspace_subsample_frames, pad_trajectory_to_max_frames_np
+from robometer.utils.tiling import apply_dynamic_tiling_to_trajectory
 
 
 def extract_rewards_from_output(outputs: Dict[str, Any]) -> np.ndarray:
@@ -106,6 +107,11 @@ def raw_dict_to_sample(
 
     def _build_trajectory(raw_data: Dict[str, Any], num_frames: int) -> Trajectory:
         processed_item: Dict[str, Any] = {}
+
+        # Dynamic tiling: raw multi-view frames can be passed under `views`
+        # instead of pre-tiled `frames` (tiled checkpoint serves both styles)
+        if raw_data.get("frames") is None and raw_data.get("views"):
+            apply_dynamic_tiling_to_trajectory(raw_data)
 
         # Process frames
         frames_array = raw_data["frames"]
@@ -357,6 +363,18 @@ def reconstruct_payload_from_npy(
                 if key in trajectory_keys:
                     if isinstance(value, dict):
                         for traj_key, traj_value in value.items():
+                            # Multi-view dynamic tiling payloads: views maps view
+                            # names to per-view __numpy_file__ references
+                            if traj_key == "views" and isinstance(traj_value, dict):
+                                resolved_views = {
+                                    view_name: numpy_arrays[ref["__numpy_file__"]]
+                                    for view_name, ref in traj_value.items()
+                                    if isinstance(ref, dict) and ref.get("__numpy_file__") in numpy_arrays
+                                }
+                                if resolved_views:
+                                    value[traj_key] = resolved_views
+                                continue
+
                             if isinstance(traj_value, dict) and traj_value.get("__numpy_file__"):
                                 # Replace with actual numpy array
                                 file_key = traj_value["__numpy_file__"]

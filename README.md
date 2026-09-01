@@ -75,6 +75,7 @@ Inference runs a **pretrained RBM model** on your own videos to get per-frame pr
 
 - **[Robometer-4B](https://huggingface.co/robometer/Robometer-4B)** — general-purpose, trained on RBM-1M
 - **[Robometer-LIBERO](https://huggingface.co/jesbu1/robometer-4b-fft-libero)** - fine-tuned Robometer checkpoint on LIBERO-90, Object, Goal, Spatial, 10 + associated failure data. Try this if you need to do LIBERO-90 RL or if the default Robometer checkpoint doesn't perform as well.
+- **[Robometer-4B-FFT-Armnet-Tiled](https://huggingface.co/jesbu1/robometer-4b-fft-armnet-tiled)** — fine-tuned on tiled multi-view datasets (`dataset_upload/TILING.md`); accepts either pre-tiled videos or raw multi-view inputs (tiled dynamically at inference).
 
 ### Inference via HTTP server
 
@@ -118,6 +119,35 @@ uv run python scripts/example_inference_local.py \
   --video /path/to/video.mp4 \
   --task "your task description"
 ```
+
+### Multi-view inputs (tiled checkpoints)
+
+Checkpoints fine-tuned on **tiled** multi-view data (see [dataset_upload/TILING.md](dataset_upload/TILING.md))
+accept either an already-tiled video (`--video`) **or raw per-camera views** — the views are
+tiled dynamically with the same layout used in training, so one hosted model serves both:
+
+```bash
+# Client sends raw camera views; the eval server tiles them before inference
+uv run python scripts/example_inference.py \
+  --eval-server-url http://localhost:8000 \
+  --view top=camera_top.mp4 \
+  --view left=camera_left.mp4 \
+  --view right=camera_right.mp4 \
+  --primary-view top \
+  --task "Move the blocks to spell AI2"
+
+# Local inference: same --view flags, tiled locally before the forward pass
+uv run python scripts/example_inference_local.py \
+  --model-path jesbu1/robometer-4b-fft-armnet-tiled \
+  --view top=camera_top.mp4 \
+  --view left=camera_left.mp4 \
+  --view right=camera_right.mp4 \
+  --task "Move the blocks to spell AI2"
+```
+
+Views are truncated to the shortest stream for synchronization; `--secondary-views`,
+`--target-width/--target-height` control layout if the defaults don't match your
+checkpoint's training data.
 
 ---
 

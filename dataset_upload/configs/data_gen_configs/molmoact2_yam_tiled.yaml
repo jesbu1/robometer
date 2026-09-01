@@ -1,0 +1,17 @@
+dataset:
+  dataset_path: ./datasets/molmoact2_yam_data
+  dataset_name: molmoact2_yam_tiled
+
+output:
+  output_dir: ./robometer_dataset/molmoact2_yam_tiled_rfm
+  max_trajectories: -1
+  max_frames: 32
+  use_video: true
+  fps: 10
+  target_width: 640
+  target_height: 540
+  num_workers: 12
+
+hub:
+  push_to_hub: true
+  hub_repo_id: molmoact2_yam_tiled_rfm

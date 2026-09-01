@@ -95,4 +95,5 @@ DS_SHORT_NAME_MAPPING = {
     "aliangdw_robofac_rbm_robofac": "robofac",
     "jesbu1_armnetbench_v01_tiled_so101_armnetbench_v01_tiled_so101": "armnetbench_tiled_so101",
     "jesbu1_armnetbench_v01_tiled_bimanual_so101_armnetbench_v01_tiled_bimanual_so101": "armnetbench_tiled_bimanual_so101",
+    "jesbu1_molmoact2_yam_tiled_rfm_molmoact2_yam_tiled": "molmoact2_yam_tiled",
 }
