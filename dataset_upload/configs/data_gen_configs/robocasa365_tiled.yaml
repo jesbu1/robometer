@@ -1,0 +1,17 @@
+dataset:
+  dataset_path: ./datasets/robocasa365-pretrain-atomic,./datasets/robocasa365-pretrain-composite
+  dataset_name: robocasa365_tiled
+
+output:
+  output_dir: ./robometer_dataset/robocasa365_tiled_rfm
+  max_trajectories: -1
+  max_frames: 32
+  use_video: true
+  fps: 10
+  target_width: 512
+  target_height: 768
+  num_workers: 12
+
+hub:
+  push_to_hub: true
+  hub_repo_id: robocasa365_tiled_rfm

@@ -441,6 +441,14 @@ DATASET_MAP = {
             "jesbu1_molmoact2_yam_tiled_rfm_molmoact2_yam_tiled",
         ],
     },
+    "rbm-1.1-tiled-robocasa365": {
+        "train": [
+            "jesbu1_robocasa365_tiled_rfm_robocasa365_tiled",
+        ],
+        "eval": [
+            "jesbu1_robocasa365_tiled_rfm_robocasa365_tiled",
+        ],
+    },
     "rbm-1m-ood": {
         "eval": [
             # "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",  # putting this here for now
