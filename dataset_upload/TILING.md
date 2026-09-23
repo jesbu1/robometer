@@ -112,6 +112,32 @@ Output is `640 x 540`, 32 frames at 10 fps per trajectory, matching the
 untiled `molmoact2_yam_rfm` sampling conventions. All episodes carry the
 native `successful` label.
 
+## RoboCasa365
+
+The RoboCasa365 LeRobot v3.0 pretraining corpora (human teleoperation, atomic +
+composite subsets) are tiled by:
+
+```text
+dataset_upload/dataset_loaders/robocasa365_loader.py:convert_robocasa365_tiled_to_hf
+```
+
+Layout: `left` (agentview_left) is the primary panel, `right` (agentview_right)
+and `wrist` (eye_in_hand) share the lower grid. Each camera has independent
+LeRobot video pointers and timestamps, so views are synchronized per camera by
+decoding each camera's own segment. The conversion config is:
+
+```text
+dataset_upload/configs/data_gen_configs/robocasa365_tiled.yaml
+```
+
+`dataset_path` accepts a comma-separated list of LeRobot v3.0 source trees;
+sources are processed in order and the trajectory index continues across them.
+
+Output is `512 x 768`, 32 frames at 10 fps per trajectory: the primary panel is
+`512 x 512` and each secondary cell `256 x 256`, so the square 256x256 source
+views keep their aspect ratio everywhere. Episode tasks come from the LeRobot
+`meta/episodes` `tasks` column. All episodes carry the `successful` label.
+
 ## Dynamic Tiling at Inference
 
 The tiled checkpoints can be hosted and served with either input style:
@@ -147,6 +173,7 @@ The tiled preprocessing configs are:
 ```text
 robometer/configs/preprocess_rbm1.1_tiled_armnet.yaml
 robometer/configs/preprocess_rbm1.1_tiled_molmoact2.yaml
+robometer/configs/preprocess_rbm1.1_tiled_robocasa.yaml
 ```
 
 The tiled fine-tuning launchers explicitly set the tiled image resolution:
@@ -154,6 +181,7 @@ The tiled fine-tuning launchers explicitly set the tiled image resolution:
 ```text
 run_scripts/finetune_armnet_tiled_qwen3_fft.sbatch
 run_scripts/finetune_molmoact2_tiled_qwen3_fft.sbatch
+run_scripts/finetune_robocasa365_tiled_qwen3_fft.sbatch
 ```
 
 The resolution is not a global default. Other dataset converters and training
@@ -167,6 +195,7 @@ Datasets:
 - `jesbu1/armnetbench_v01_tiled_so101`
 - `jesbu1/armnetbench_v01_tiled_bimanual_so101`
 - `jesbu1/molmoact2_yam_tiled_rfm`
+- `jesbu1/robocasa365_tiled_rfm`
 
 Model:
 
