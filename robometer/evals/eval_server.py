@@ -40,7 +40,7 @@ import numpy as np
 import torch
 from omegaconf import DictConfig
 from hydra import main as hydra_main
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from robometer.evals.eval_utils import (
@@ -51,7 +51,11 @@ from robometer.utils.save import load_model_from_hf
 from robometer.configs.eval_configs import EvalServerConfig
 from robometer.configs.experiment_configs import ExperimentConfig
 from robometer.data.dataset_types import PreferenceSample, ProgressSample
-from robometer.utils.tiling import apply_dynamic_tiling_to_trajectory
+from robometer.utils.tiling import (
+    apply_dynamic_tiling_to_trajectory,
+    decode_video_to_frames,
+    views_from_video_files,
+)
 from robometer.utils.setup_utils import setup_model_and_processor, setup_batch_collator
 from robometer.models.utils import ModelOutput, convert_bins_to_continuous, convert_bins_to_continuous_hard
 from robometer.utils.config_utils import display_config, convert_hydra_to_dataclass
@@ -399,6 +403,7 @@ class MultiGPUEvalServer:
 
             model = model.to(device)
             model.eval()
+            _rebind_frozen_visual(model)
 
             # Initialize GPU stats
             self.gpu_stats[gpu_id] = {
@@ -607,6 +612,31 @@ def compute_batch_outputs(
     return results
 
 
+def _rebind_frozen_visual(model: Any) -> None:
+    """Re-bind a replica's frozen vision forward to its own visual module.
+
+    ``RBM.__init__`` freezes the vision tower by assigning a closure that captures
+    the *bound method* of the source module. ``copy.deepcopy`` copies the forward
+    attribute but not the closure, so every replica would keep calling the original
+    (CPU-resident) module and fail with "input CUDA vs weight CPU". Rebinding here
+    keeps the no-grad behaviour while pointing at the replica's own weights.
+    """
+    inner = getattr(model, "model", model)
+    visual = getattr(inner, "visual", None)
+    if visual is None:
+        return
+    forward = getattr(visual, "forward", None)
+    if forward is None or getattr(forward, "__closure__", None) is None:
+        return
+
+    @torch.no_grad()
+    def frozen_visual_forward(*args, **kwargs):
+        return type(visual).forward(visual, *args, **kwargs)
+
+    visual.forward = frozen_visual_forward
+    logger.debug("Rebound frozen vision forward to the replica's own visual module")
+
+
 def create_app(cfg: EvalServerConfig, multi_gpu_server: MultiGPUEvalServer | None = None):
     app = FastAPI(title="RBM Multi-GPU Evaluation Server")
 
@@ -679,6 +709,149 @@ def create_app(cfg: EvalServerConfig, multi_gpu_server: MultiGPUEvalServer | Non
             f"and {len(other_data)} other fields, use_frame_steps={use_frame_steps}"
         )
         return await multi_gpu_server.process_batch(batch_payload)
+
+    @app.post("/evaluate_videos")
+    async def evaluate_videos(request: Request) -> Dict[str, Any]:
+        """Evaluate raw multi-view videos, tiling them server-side.
+
+        Upload one video per camera view and the server decodes, synchronizes and
+        tiles them into the single-image format a tiled checkpoint expects, then
+        returns per-frame progress (reward) and success predictions.
+
+        Form fields:
+          - ``task`` (required): language instruction.
+          - one video file per view; the view name is the file field name or the
+            filename stem (``top`` / ``top.mp4`` / ``view_top`` all mean ``top``).
+          - ``primary_view``: large upper panel (default: first of top/front/left).
+          - ``secondary_views``: comma-separated lower-grid order (default: rest).
+          - ``target_width`` / ``target_height``: canvas size. When omitted the
+            canvas is inferred so every panel keeps the primary view's aspect.
+          - ``primary_height_fraction``: primary panel share of canvas height
+            (default 2/3).
+          - ``max_frames``: cap on sampled frames per view (default 64).
+          - ``max_width``: optional downscale before tiling.
+          - ``use_frame_steps``: expand into frame-step sub-samples (default false).
+        """
+        import uuid
+
+        from starlette.datastructures import UploadFile
+
+        form = await request.form()
+
+        task = str(form.get("task", "") or "").strip()
+        if not task:
+            raise HTTPException(status_code=400, detail="Form field 'task' is required")
+
+        def optional_float(name: str) -> Optional[float]:
+            raw = form.get(name)
+            return None if raw in (None, "") else float(raw)
+
+        def optional_int(name: str, default: Optional[int] = None) -> Optional[int]:
+            raw = form.get(name)
+            return default if raw in (None, "") else int(float(raw))
+
+        primary_view = str(form.get("primary_view", "") or "").strip() or None
+        secondary_raw = str(form.get("secondary_views", "") or "").strip()
+        secondary_views = [v.strip() for v in secondary_raw.split(",") if v.strip()] or None
+        target_width = optional_int("target_width")
+        target_height = optional_int("target_height")
+        primary_height_fraction = optional_float("primary_height_fraction")
+        max_frames = optional_int("max_frames", 64) or 64
+        max_width = optional_int("max_width")
+        use_frame_steps_raw = form.get("use_frame_steps", False)
+        if isinstance(use_frame_steps_raw, bool):
+            use_frame_steps = use_frame_steps_raw
+        else:
+            use_frame_steps = str(use_frame_steps_raw).lower() == "true"
+
+        video_blobs: Dict[str, bytes] = {}
+        for field_name, value in form.multi_items():
+            if not isinstance(value, UploadFile):
+                continue
+            view = field_name
+            if view.startswith("view_"):
+                view = view[len("view_"):]
+            if view in {"file", "video", "videos"} or "/" in view or "\\" in view or "." in view:
+                stem = os.path.splitext(os.path.basename(value.filename or field_name))[0]
+                view = stem[len("view_"):] if stem.startswith("view_") else stem
+            video_blobs[view] = await value.read()
+
+        if not video_blobs:
+            raise HTTPException(status_code=400, detail="At least one video file is required")
+
+        # A single upload with no explicit multi-view request is treated as an
+        # already-tiled video: no view composition needed.
+        pre_tiled = len(video_blobs) == 1 and not secondary_views
+
+        if pre_tiled:
+            try:
+                frames = decode_video_to_frames(
+                    next(iter(video_blobs.values())), max_frames=max_frames, max_width=max_width
+                )
+            except (KeyError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail=f"Video decoding failed: {exc}") from exc
+            if len(frames) < 2:
+                raise HTTPException(status_code=400, detail="Need at least 2 frames in the uploaded video")
+            num_frames = int(len(frames))
+            trajectory: Dict[str, Any] = {
+                "frames": frames,
+                "frames_shape": tuple(frames.shape),
+                "task": task,
+                "id": f"upload-{uuid.uuid4()}",
+                "metadata": {"subsequence_length": num_frames},
+                "video_embeddings": None,
+            }
+            tiling_info: Dict[str, Any] = {
+                "mode": "pre_tiled",
+                "source_shapes": {next(iter(video_blobs)): list(frames.shape)},
+            }
+        else:
+            try:
+                views, primary, secondary = views_from_video_files(
+                    video_blobs,
+                    primary_view=primary_view,
+                    secondary_views=secondary_views,
+                    max_frames=max_frames,
+                    max_width=max_width,
+                )
+            except (KeyError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail=f"Video decoding/tiling failed: {exc}") from exc
+
+            num_frames = int(min(len(frames) for frames in views.values()))
+            trajectory = {
+                "frames": None,
+                "task": task,
+                "id": f"upload-{uuid.uuid4()}",
+                "metadata": {"subsequence_length": num_frames},
+                "video_embeddings": None,
+                "views": views,
+                "primary_view": primary,
+                "secondary_views": secondary,
+            }
+            tiling_info = {
+                "mode": "tiled_by_server",
+                "primary_view": primary,
+                "secondary_views": secondary,
+                "source_shapes": {name: list(frames.shape) for name, frames in views.items()},
+            }
+        if not pre_tiled:
+            if target_width:
+                trajectory["target_width"] = int(target_width)
+            if target_height:
+                trajectory["target_height"] = int(target_height)
+            if primary_height_fraction is not None:
+                trajectory["primary_height_fraction"] = float(primary_height_fraction)
+
+        logger.debug(
+            f"Received /evaluate_videos request: mode={tiling_info['mode']} "
+            f"uploads={list(video_blobs)} frames={num_frames} use_frame_steps={use_frame_steps}"
+        )
+        result = await multi_gpu_server.process_batch(
+            {"samples": [{"sample_type": "progress", "trajectory": trajectory}], "use_frame_steps": use_frame_steps}
+        )
+        result["num_frames"] = num_frames
+        result["tiling"] = tiling_info
+        return result
 
     @app.get("/gpu_status")
     def get_gpu_status() -> Dict[str, Any]:

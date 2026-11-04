@@ -166,6 +166,22 @@ tiles locally before inference. Raw multi-view dicts with a `views` key are
 also accepted by `robometer/evals/eval_utils.py:raw_dict_to_sample` for
 rollout-style wrappers.
 
+### Serve raw videos to a tiled checkpoint
+
+`POST /evaluate_videos` on the eval server accepts one video per view, then
+decodes, tiles and scores them server-side, so clients need no preprocessing:
+
+```bash
+sbatch run_scripts/serve_tiled_eval.sbatch /path/to/checkpoint 8010
+python scripts/send_videos_to_tiled_eval.py --url http://localhost:8010 \
+  --task "push the green button" \
+  --view top=top.mp4 --view front=front.mp4 --view wrist=wrist.mp4
+```
+
+A single upload with no `secondary_views` is treated as an already-tiled video
+and passed through. See `robometer/evals/README_TILED_SERVER.md` for the full
+contract, layout table and troubleshooting.
+
 ## Preprocessing and Training
 
 The tiled preprocessing configs are:

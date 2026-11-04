@@ -1,0 +1,21 @@
+# AutoRLBench SO-101 busybox push_green_button rollouts -> tiled RBM dataset.
+# Source: LeRobot v3.0, 2900 episodes, 1 task, cameras front/top/wrist at 426x240.
+# Tiling: top is the primary upper panel (640x360), front+wrist share the lower
+# grid at 320x180 each, so every panel keeps the source ~1.78 aspect ratio.
+dataset:
+  dataset_path: /gpfs/scrubbed/jessezha/autorlbench_busybox_native
+  dataset_name: so101_busybox_push_green_button_lerobot_tiled
+
+output:
+  output_dir: /gpfs/scrubbed/jessezha/autorlbench_tiled_so101_busybox
+  max_trajectories: -1
+  max_frames: 64
+  use_video: true
+  fps: 10
+  target_width: 640
+  target_height: 540
+  num_workers: 8
+
+hub:
+  push_to_hub: true
+  hub_repo_id: so101_busybox_push_green_button_tiled

@@ -433,6 +433,14 @@ DATASET_MAP = {
             "jesbu1_armnetbench_v01_tiled_bimanual_so101_armnetbench_v01_tiled_bimanual_so101",
         ],
     },
+    "rbm-1.1-tiled-busybox": {
+        "train": [
+            "jesbu1_so101_busybox_push_green_button_tiled_so101_busybox_push_green_button_lerobot_tiled",
+        ],
+        "eval": [
+            "jesbu1_so101_busybox_push_green_button_tiled_so101_busybox_push_green_button_lerobot_tiled",
+        ],
+    },
     "rbm-1.1-tiled-molmoact2": {
         "train": [
             "jesbu1_molmoact2_yam_tiled_rfm_molmoact2_yam_tiled",
@@ -533,6 +541,7 @@ DATA_SOURCE_CATEGORY = {
         "roboarena_eval_debug_nowrist",
         "armnetbench",
         "armnetbench_tiled",
+        "so101_busybox_push_green_button_lerobot_tiled",
     ],
     "franka": [
         "oxe_droid",

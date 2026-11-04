@@ -703,6 +703,32 @@ def main(cfg: GenerateConfig):
             print(f"Dataset saved locally to: {dataset_path_local}")
         print("Dataset conversion complete!")
         return
+    elif "lerobot_tiled" in cfg.dataset.dataset_name.lower():
+        # Generic LeRobot v3.0 -> tiled converter (auto-discovers camera views)
+        from dataset_upload.dataset_loaders.lerobot_tiled_loader import convert_lerobot_tiled_to_hf
+
+        print(f"Converting generic LeRobot dataset to tiled HF format from: {cfg.dataset.dataset_path}")
+        dataset = convert_lerobot_tiled_to_hf(
+            dataset_path=cfg.dataset.dataset_path,
+            dataset_name=cfg.dataset.dataset_name,
+            output_dir=cfg.output.output_dir,
+            max_trajectories=cfg.output.max_trajectories,
+            max_frames=cfg.output.max_frames,
+            fps=cfg.output.fps,
+            target_width=cfg.output.target_width,
+            target_height=cfg.output.target_height,
+            num_workers=max(1, cfg.output.num_workers or 8),
+        )
+        if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
+            push_hf_dataset_and_video_files_to_hub(
+                dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir
+            )
+        else:
+            dataset_path_local = os.path.join(cfg.output.output_dir, cfg.dataset.dataset_name.lower())
+            dataset.save_to_disk(dataset_path_local)
+            print(f"Dataset saved locally to: {dataset_path_local}")
+        print("Dataset conversion complete!")
+        return
     elif "robocasa365_tiled" in cfg.dataset.dataset_name.lower():
         # RoboCasa365 pretraining corpora converted to tiled (left/right/wrist) trajectories
         from dataset_upload.dataset_loaders.robocasa365_loader import (

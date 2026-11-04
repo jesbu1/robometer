@@ -97,4 +97,5 @@ DS_SHORT_NAME_MAPPING = {
     "jesbu1_armnetbench_v01_tiled_bimanual_so101_armnetbench_v01_tiled_bimanual_so101": "armnetbench_tiled_bimanual_so101",
     "jesbu1_molmoact2_yam_tiled_rfm_molmoact2_yam_tiled": "molmoact2_yam_tiled",
     "jesbu1_robocasa365_tiled_rfm_robocasa365_tiled": "robocasa365_tiled",
+    "jesbu1_so101_busybox_push_green_button_tiled_so101_busybox_push_green_button_lerobot_tiled": "busybox_push_green_button",
 }
