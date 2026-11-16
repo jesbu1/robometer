@@ -12,6 +12,26 @@
   <img src="assets/robometer.jpg" alt="Robometer" width="100%"/>
 </p>
 
+> ### 📄 Tiled multi-view checkpoints
+> Robometer can now train and serve checkpoints on several synchronized camera views tiled into a
+> single frame. Send **raw per-view videos** to the eval server and it decodes, synchronizes and
+> tiles them for you — no client-side preprocessing.
+>
+> **Serving guide → [`robometer/evals/README_TILED_SERVER.md`](robometer/evals/README_TILED_SERVER.md)**
+> · **Pipeline background → [`dataset_upload/TILING.md`](dataset_upload/TILING.md)**
+
+### What's new (high level)
+
+| Area | Change |
+| --- | --- |
+| **Tiling core** | `robometer/utils/tiling.py`: `tile_synchronized_views` (one large primary panel + an automatically laid-out lower grid for any number of views), plus `decode_video_to_frames` / `views_from_video_files` and dynamic tiling for inference. |
+| **Dataset conversion** | Generic `dataset_upload/dataset_loaders/lerobot_tiled_loader.py` auto-discovers camera views and derives per-episode labels from the data parquet (falling back to `labels.jsonl`, failing closed if neither exists). Tiled converters for Armnet, MolmoAct2 YAM, RoboCasa365 and AutoRLBench. |
+| **Tiled datasets** | `jesbu1/armnetbench_v01_tiled_so101`, `jesbu1/armnetbench_v01_tiled_bimanual_so101`, `jesbu1/molmoact2_yam_tiled_rfm`, `jesbu1/robocasa365_tiled_rfm`, `jesbu1/so101_busybox_push_green_button_tiled`. |
+| **Tiled checkpoints** | `jesbu1/robometer-4b-fft-armnet-tiled`, `jesbu1/robometer-4b-fft-busybox-tiled` (full fine-tunes of `robometer/Robometer-4B`). |
+| **Serving** | New `POST /evaluate_videos` endpoint (upload one video per view → decode + tile + score), `scripts/send_videos_to_tiled_eval.py` client, and `run_scripts/serve_tiled_eval.sbatch` launcher. |
+| **Training** | Dedicated tiled preprocessing configs (`robometer/configs/preprocess_rbm1.1_tiled_*.yaml`) and FFT launchers that set the tiled resolution explicitly, so other datasets keep their existing settings. |
+| **Fixes** | Frozen vision tower is rebound after `deepcopy` (GPU replicas previously called the CPU tower); loopback proxy bypass in the client; documented `pydantic.v1` repair and Hydra `=` quoting. |
+
 ---
 
 ## Abstract
@@ -110,6 +130,24 @@ uv run python scripts/example_inference.py \
   --video /path/to/video.mp4 \
   --task "your task description"
 ```
+
+#### Tiled checkpoints: send raw camera videos
+
+For tiled checkpoints (`*-tiled`), you can upload one video per camera view and
+the server decodes, synchronizes and tiles them for you:
+
+```bash
+sbatch run_scripts/serve_tiled_eval.sbatch /path/to/checkpoint 8010
+
+python scripts/send_videos_to_tiled_eval.py \
+  --url http://localhost:8010 \
+  --task "push the green button" \
+  --view top=top.mp4 --view front=front.mp4 --view wrist=wrist.mp4
+```
+
+Full guide: **[`robometer/evals/README_TILED_SERVER.md`](robometer/evals/README_TILED_SERVER.md)**
+— endpoint contract, per-checkpoint view layouts, and troubleshooting. Background on
+the tiling itself: [`dataset_upload/TILING.md`](dataset_upload/TILING.md).
 
 To run the model locally (loads checkpoint from Hugging Face, no server):
 

@@ -1,5 +1,9 @@
 # Baseline Evaluation Guide
 
+> Serving a **tiled** checkpoint over HTTP (send raw per-view videos, rewards come back):
+> see [`README_TILED_SERVER.md`](README_TILED_SERVER.md). This guide covers offline
+> baseline evaluation across datasets.
+
 This guide documents how to run baseline evaluations for GVL, RL-VLM-F, VLAC, and Robometer on all datasets.
 
 ## Overview
